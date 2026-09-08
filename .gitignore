@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# 本地配置（API 联系邮箱、Zotero 授权 key 等）
+.env
+.env.*
+!.env.example
+
+# 运行期产物（下载的 PDF、检索缓存）
+data/
+cache/

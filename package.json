@@ -1,0 +1,31 @@
+{
+  "name": "literature-search-agent",
+  "version": "0.1.0",
+  "description": "免费的、面向 Agent 的学术文献调研能力包：多源检索 / 摘要富集 / 引用图 / PDF 全文 / Zotero 归档",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": "./dist/core/index.js"
+  },
+  "bin": {
+    "lit-search": "./dist/interfaces/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}
