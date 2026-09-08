@@ -33,6 +33,20 @@ npm run typecheck
 npm test
 ```
 
+### CLI（阶段 1 已可用）
+
+```bash
+npm run build
+node dist/interfaces/cli/index.js search "plasma channel ion acceleration" --limit 10 --pretty
+node dist/interfaces/cli/index.js lookup 10.1103/revmodphys.85.751
+node dist/interfaces/cli/index.js cited-by 10.1063/1.873242 --limit 25
+```
+
+可选环境变量（密钥只走环境变量，不入库）：
+- `LIT_SEARCH_OPENALEX_API_KEY`：OpenAlex 账户额度；无则退回 `LIT_SEARCH_MAILTO` polite pool，再退匿名池
+- `LIT_SEARCH_MAILTO`：OpenAlex polite pool / Crossref / Unpaywall 共用联系邮箱
+- `LIT_SEARCH_S2_API_KEY`：Semantic Scholar（阶段 2 启用）
+
 ## 实施路线
 
 见 `docs/PLAN.md`（短期 4 个阶段：核心检索 → 富集/PDF → Zotero 归档 → DSH preset；长期：MCP、滚雪球调研、语义检索、工作流模板、缓存、反哺 Deep Read）。

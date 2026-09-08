@@ -48,12 +48,17 @@ literature-search-agent/
 
 ## 短期计划（MVP，约 4 个会话）
 
-### 阶段 1：核心检索
-- [ ] `core/types.ts`、`ratelimit.ts`、`dedupe.ts`
-- [ ] `providers/openalex.ts`：search / lookup by DOI / cited-by
-- [ ] 单测：mock fetch 覆盖映射、去重、节流
-- [ ] CLI `search` 子命令
-- **验收**：`lit-search search "plasma channel ion acceleration" --limit 10` 输出去重后的结构化结果
+### 阶段 1：核心检索 ✅（2026-09 完成）
+- [x] `core/types.ts`、`ratelimit.ts`、`dedupe.ts`
+- [x] `providers/openalex.ts`：search / lookup by DOI / cited-by
+- [x] 单测：mock fetch 覆盖映射、去重、节流（48 例全绿）
+- [x] CLI `search` 子命令（另有 `lookup` / `cited-by` 便于调试）
+- **验收**：`lit-search search "plasma channel ion acceleration" --limit 10` 输出去重后的结构化结果 ✅（真实网络验证通过）
+
+环境变量约定（本阶段定名，后续阶段沿用；密钥只走环境变量，不入库）：
+- `LIT_SEARCH_OPENALEX_API_KEY`：有 key → `api_key` 参数 + 10 rps；无 key 有 mailto → polite pool 10 rps；都没有 → 匿名池 2 rps 保守档
+- `LIT_SEARCH_MAILTO`：OpenAlex polite pool / Crossref / Unpaywall 共用
+- `LIT_SEARCH_S2_API_KEY`：阶段 2 semanticscholar provider 用；有 key → `x-api-key` + 1 rps 独享，无 key → 匿名共享池保守节流
 
 ### 阶段 2：摘要富集 + S2/Crossref + PDF
 - [ ] `providers/semanticscholar.ts`（search + DOI 查摘要，1 rps 节流）
@@ -86,7 +91,7 @@ literature-search-agent/
 
 | 风险 | 对策 |
 |---|---|
-| S2 无认证限流（~1 rps）拖慢批量 | 工具内节流 + 结果缓存；S2 仅作 OpenAlex 补充源 |
+| S2 无认证限流（~1 rps）拖慢批量 | ✅ 已缓解：用户持有 `LIT_SEARCH_S2_API_KEY`（独享 1 rps）；工具内节流 + 结果缓存；S2 仅作 OpenAlex 补充源 |
 | OpenAlex 检索式能力弱于 Scopus 布尔检索 | 多查询组合并发（title / title+author / bibliographic）+ LLM 后置筛选 |
 | OA PDF 覆盖率不全 | Unpaywall 兜底；拿不到的降级为"摘要可用、全文缺失" |
 | DSH preset 挂载机制不确定 | 阶段 4 先实查；备用路径为动态插件 |
