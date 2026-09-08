@@ -60,12 +60,15 @@ literature-search-agent/
 - `LIT_SEARCH_MAILTO`：OpenAlex polite pool / Crossref / Unpaywall 共用
 - `LIT_SEARCH_S2_API_KEY`：阶段 2 semanticscholar provider 用；有 key → `x-api-key` + 1 rps 独享，无 key → 匿名共享池保守节流
 
-### 阶段 2：摘要富集 + S2/Crossref + PDF
-- [ ] `providers/semanticscholar.ts`（search + DOI 查摘要，1 rps 节流）
-- [ ] `providers/crossref.ts`（bibliographic + title/author 检索）
-- [ ] `providers/unpaywall.ts`；`enrich/` 富集链
-- [ ] `pdf/`：OA 链接发现 → 下载 → pdf-parse 提取（截断/分段）
-- **验收**：给定 DOI 能拿到摘要（链式兜底）与可下载 OA PDF 的全文文本
+### 阶段 2：摘要富集 + S2/Crossref + PDF ✅（2026-09 完成）
+- [x] `providers/semanticscholar.ts`（search + DOI 查摘要；有 key 1 rps 独享，无 key 3s 保守档）
+- [x] `providers/crossref.ts`（bibliographic + title/author 检索、DOI lookup）
+- [x] `providers/unpaywall.ts`；`enrich/` 富集链（OpenAlex→Crossref→S2/EuropePMC/arXiv 并发→doi.org HTML→Unpaywall）
+- [x] `pdf/`：OA 链接发现 → 下载（https/30MB/%PDF 魔数校验）→ pdf-parse v2 提取（maxPages/maxChars 截断，外部提取器注入口）
+- [x] CLI 新增 `abstract` / `pdf` / `extract`；`search`/`lookup` 支持 `--source openalex|s2|crossref`
+- **验收**：给定 DOI 能拿到摘要（链式兜底）与可下载 OA PDF 的全文文本 ✅（真实网络验证：enrich 命中 OpenAlex；PLOS OA PDF 下载 131KB 并提取前 2 页文本）
+
+注意：pdf-parse 实际安装为 v2 重写版（pdfjs 内核，`PDFParse` 类 API），与计划中的 v1 API 不同但满足"纯 JS 无 Python"约束。S2 匿名池实测 429 频发，需 `LIT_SEARCH_S2_API_KEY` 生效后才稳定。
 
 ### 阶段 3：Zotero 归档
 - [ ] `zotero/`：关键词检索、DOI 查重、建条目、附件上传、收藏夹、笔记

@@ -73,6 +73,8 @@ export interface RequestJsonOptions {
   maxAttempts?: number;
   /** 单次请求超时（毫秒），默认 20000 */
   timeoutMs?: number;
+  /** 响应解析方式，默认 'json'；'text' 用于 XML/HTML 源 */
+  responseAs?: 'json' | 'text';
 }
 
 function userAgent(): string {
@@ -103,8 +105,9 @@ function retryAfterMs(response: Response, attempt: number): number {
 }
 
 /**
- * 通用 JSON GET：先过节流器，再带超时发请求。
+ * 通用 GET：先过节流器，再带超时发请求。
  * 404 → undefined；429/5xx/网络错误 → 有限重试；其余非 2xx → ProviderError。
+ * responseAs: 'json'（默认）或 'text'（XML/HTML 源）。
  */
 export async function requestJson(url: URL, options: RequestJsonOptions): Promise<unknown> {
   const {
@@ -115,9 +118,10 @@ export async function requestJson(url: URL, options: RequestJsonOptions): Promis
     headers = {},
     maxAttempts = 2,
     timeoutMs = 20_000,
+    responseAs = 'json',
   } = options;
   const requestHeaders: Record<string, string> = {
-    Accept: 'application/json',
+    Accept: responseAs === 'text' ? 'application/atom+xml, text/xml;q=0.9, text/html;q=0.8' : 'application/json',
     'User-Agent': userAgent(),
     ...headers,
   };
@@ -143,7 +147,7 @@ export async function requestJson(url: URL, options: RequestJsonOptions): Promis
       );
     }
 
-    if (response.ok) return response.json();
+    if (response.ok) return responseAs === 'text' ? response.text() : response.json();
     if (response.status === 404) return undefined;
     if (response.status === 401 || response.status === 403) {
       throw new ProviderError(`${provider} 认证失败或请求被拒绝（HTTP ${response.status}）。`, 'auth_failed', false, response.status);
@@ -164,4 +168,10 @@ export async function requestJson(url: URL, options: RequestJsonOptions): Promis
   }
   // 不可达：循环要么 return 要么 throw
   throw new ProviderError(`${provider} 请求失败。`, 'provider_unavailable', true);
+}
+
+/** requestJson 的文本响应版本（arXiv Atom XML / OA HTML 页面）。404 → 空串。 */
+export async function requestText(url: URL, options: Omit<RequestJsonOptions, 'responseAs'>): Promise<string> {
+  const value = await requestJson(url, { ...options, responseAs: 'text' });
+  return typeof value === 'string' ? value : '';
 }
