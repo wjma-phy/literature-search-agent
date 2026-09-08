@@ -11,6 +11,9 @@
  * 认证从环境变量注入：LIT_SEARCH_OPENALEX_API_KEY / LIT_SEARCH_S2_API_KEY / LIT_SEARCH_MAILTO。
  */
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   citedByOpenAlex,
@@ -21,9 +24,11 @@ import {
   lookupCrossrefByDoi,
   lookupOpenAlexByDoi,
   lookupS2ByDoi,
+  saveWork,
   searchCrossref,
   searchOpenAlex,
   searchSemanticScholar,
+  ZoteroClient,
 } from '../../core/index.js';
 import type { SearchResult, WorkItem } from '../../core/index.js';
 
@@ -31,6 +36,8 @@ interface CliAuth {
   openAlexApiKey?: string;
   s2ApiKey?: string;
   mailto?: string;
+  zoteroKey?: string;
+  zoteroUrl?: string;
 }
 
 function authFromEnv(): CliAuth {
@@ -38,15 +45,28 @@ function authFromEnv(): CliAuth {
   const openAlexApiKey = process.env.LIT_SEARCH_OPENALEX_API_KEY?.trim();
   const s2ApiKey = process.env.LIT_SEARCH_S2_API_KEY?.trim();
   const mailto = process.env.LIT_SEARCH_MAILTO?.trim();
+  const zoteroKey = process.env.LIT_SEARCH_ZOTERO_KEY?.trim();
+  const zoteroUrl = process.env.LIT_SEARCH_ZOTERO_URL?.trim();
   if (openAlexApiKey) auth.openAlexApiKey = openAlexApiKey;
   if (s2ApiKey) auth.s2ApiKey = s2ApiKey;
   if (mailto) auth.mailto = mailto;
+  if (zoteroKey) auth.zoteroKey = zoteroKey;
+  if (zoteroUrl) auth.zoteroUrl = zoteroUrl;
   if (!openAlexApiKey && !mailto) {
     process.stderr.write(
       '[lit-search] 提示：未配置 LIT_SEARCH_OPENALEX_API_KEY / LIT_SEARCH_MAILTO，使用 OpenAlex 匿名池（较慢）。\n',
     );
   }
   return auth;
+}
+
+function zoteroClient(auth: CliAuth): ZoteroClient {
+  return new ZoteroClient({
+    ...(auth.zoteroUrl ? { baseUrl: auth.zoteroUrl } : {}),
+    ...(auth.zoteroKey ? { apiKey: auth.zoteroKey } : {}),
+    // CLI 是短生命周期进程；remember=false 的 key 跨进程失效，遇 401 直接弹窗重授权
+    autoAuthorize: true,
+  });
 }
 
 function printJson(value: unknown, pretty: boolean): void {
@@ -68,8 +88,12 @@ function usage(): never {
       '  lit-search abstract <doi|标题> [--pretty]',
       '  lit-search pdf <doi> [--out path]',
       '  lit-search extract <pdf-path> [--max-pages N] [--max-chars N] [--pretty]',
+      '  lit-search zotero-auth                                     弹出 Zotero 授权窗口，获取写 key',
+      '  lit-search zotero-search <query> [--limit N] [--pretty]    检索本地 Zotero 库',
+      '  lit-search zotero-save <doi> [--collection KEY] [--note "..."] [--no-pdf] [--pretty]',
       '',
-      '环境变量：LIT_SEARCH_OPENALEX_API_KEY、LIT_SEARCH_S2_API_KEY、LIT_SEARCH_MAILTO',
+      '环境变量：LIT_SEARCH_OPENALEX_API_KEY、LIT_SEARCH_S2_API_KEY、LIT_SEARCH_MAILTO、',
+      '          LIT_SEARCH_ZOTERO_KEY（zotero-auth 获得）、LIT_SEARCH_ZOTERO_URL',
       '',
     ].join('\n'),
   );
@@ -258,6 +282,118 @@ async function main(): Promise<void> {
       ...(values['max-chars'] !== undefined ? { maxChars: parsePositiveInt(values['max-chars'], 'max-chars') } : {}),
     });
     printJson(result, values.pretty);
+    return;
+  }
+
+  if (command === 'zotero-auth') {
+    const client = zoteroClient(auth);
+    const { zoteroVersion } = await client.ping();
+    process.stderr.write(`[lit-search] Zotero ${zoteroVersion} 在线，请在 Zotero 弹窗中点击「始终允许 / Always Allow」…\n`);
+    const { key, remember } = await client.authorize();
+    process.stdout.write(`${key}\n`);
+    if (remember) {
+      process.stderr.write(
+        `[lit-search] 获得持久 key。持久化：\n  setx LIT_SEARCH_ZOTERO_KEY "${key}"\n（对之后新开的终端生效）\n`,
+      );
+    } else {
+      process.stderr.write(
+        '[lit-search] 注意：这是单次 key（弹窗中需点「始终允许」才能获得持久 key），一个写请求后即失效。\n',
+      );
+    }
+    return;
+  }
+
+  if (command === 'zotero-search') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        limit: { type: 'string', default: '20' },
+        pretty: { type: 'boolean', default: false },
+      },
+    });
+    const query = positionals.join(' ').trim();
+    if (!query) usage();
+    const limit = parsePositiveInt(values.limit, 'limit');
+    const items = await zoteroClient(auth).searchItems(query, { limit });
+    printJson({ items, count: items.length }, values.pretty);
+    return;
+  }
+
+  if (command === 'zotero-save') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        collection: { type: 'string' },
+        note: { type: 'string' },
+        'no-pdf': { type: 'boolean', default: false },
+        pretty: { type: 'boolean', default: false },
+      },
+    });
+    const doi = positionals[0];
+    if (!doi) usage();
+
+    // 1. 取元数据（OpenAlex 为主，失败时富集链兜底摘要）
+    let work = await lookupOpenAlexByDoi(doi, {
+      ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
+      ...(auth.mailto ? { mailto: auth.mailto } : {}),
+    }).catch(() => undefined);
+    if (!work) {
+      const enriched = await enrichAbstract({ doi, title: '' }, {
+        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
+        ...(auth.s2ApiKey ? { s2ApiKey: auth.s2ApiKey } : {}),
+        ...(auth.mailto ? { mailto: auth.mailto } : {}),
+      });
+      if (!enriched.doi) fail(`无法解析 DOI "${doi}"。`, 1);
+      work = {
+        title: doi, authors: [], year: null, venue: '', doi: enriched.doi, url: '',
+        citationCount: null, abstract: enriched.abstract, abstractStatus: enriched.status === 'complete' ? 'complete' : 'missing',
+        oaPdfUrl: '', source: 'enrich', externalIds: {},
+      };
+    } else if (!work.abstract) {
+      const enriched = await enrichAbstract({ doi: work.doi, title: work.title }, {
+        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
+        ...(auth.s2ApiKey ? { s2ApiKey: auth.s2ApiKey } : {}),
+        ...(auth.mailto ? { mailto: auth.mailto } : {}),
+      });
+      if (enriched.abstract) {
+        work = { ...work, abstract: enriched.abstract, abstractStatus: 'complete' };
+      }
+    }
+
+    // 2. OA PDF（--no-pdf 跳过）
+    let pdfPath: string | undefined;
+    let tmpDir: string | undefined;
+    if (!values['no-pdf']) {
+      const url = work.oaPdfUrl || await discoverOaPdfUrl(work, {
+        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
+        ...(auth.mailto ? { mailto: auth.mailto } : {}),
+      });
+      if (url) {
+        tmpDir = await mkdtemp(join(tmpdir(), 'lit-search-zotero-'));
+        try {
+          pdfPath = (await downloadPdf(url, join(tmpDir, 'paper.pdf'))).path;
+        } catch (error) {
+          process.stderr.write(`[lit-search] PDF 下载失败（${error instanceof Error ? error.message : String(error)}），仅保存元数据。\n`);
+        }
+      } else {
+        process.stderr.write('[lit-search] 未找到 OA PDF，仅保存元数据。\n');
+      }
+    }
+
+    // 3. 归档（DOI 查重 + 建条目 + 附件 + 笔记 + 收藏夹）
+    try {
+      const result = await saveWork(zoteroClient(auth), {
+        item: work,
+        ...(pdfPath ? { pdfPath } : {}),
+        ...(values.collection ? { collectionKey: values.collection } : {}),
+        ...(values.note ? { note: values.note } : {}),
+      });
+      printJson({ ...result, title: work.title, doi: work.doi }, values.pretty);
+    } finally {
+      if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+    }
     return;
   }
 

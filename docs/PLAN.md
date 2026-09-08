@@ -70,10 +70,17 @@ literature-search-agent/
 
 注意：pdf-parse 实际安装为 v2 重写版（pdfjs 内核，`PDFParse` 类 API），与计划中的 v1 API 不同但满足"纯 JS 无 Python"约束。S2 匿名池实测 429 频发，需 `LIT_SEARCH_S2_API_KEY` 生效后才稳定。
 
-### 阶段 3：Zotero 归档
-- [ ] `zotero/`：关键词检索、DOI 查重、建条目、附件上传、收藏夹、笔记
-- [ ] CLI `--save-zotero`
-- **验收**：搜索结果一键存 Zotero（带 PDF）；重复执行不产生重复条目；真实 Zotero 验证后清理测试条目
+### 阶段 3：Zotero 归档 ✅（2026-09 完成）
+- [x] `zotero/`：关键词检索、DOI 查重（`qmode=everything`）、建条目、附件四段上传、收藏夹、笔记、删除（移植 Read-Studio `zoteroApi.js`）
+- [x] CLI `zotero-auth` / `zotero-search` / `zotero-save <doi>`（元数据 + OA PDF + 笔记 + 收藏夹一键归档）
+- **验收**：✅ 真实 Zotero 10.0.1 验证——存带 PDF 条目成功；重复执行命中 DOI 查重返回 attached 而非重复建条目；测试条目已全部清理
+
+实机踩坑记录（重要）：
+- Zotero 10 本地 API 写授权：弹窗点「允许」= 单次 key（一个写请求即消耗）；点「始终允许 / Always Allow」= 持久 key（remember=true，可入库复用，`LIT_SEARCH_ZOTERO_KEY`）
+- DOI 查重必须 `qmode=everything`：默认 quicksearch 只搜标题/作者/年份，DOI 字段搜不到（曾因此漏查重建出重复条目）
+- Zotero 内嵌 HTTP/1.0 服务器连接管理脆弱：所有请求必须带 `Connection: close`，否则 undici 复用已关闭 socket 报 "fetch failed"
+- key 被消耗/失效时客户端自动弹窗重授权一次并重试（autoAuthorize，对齐 Read-Studio 行为）
+- 已知小瑕疵：同一 PDF 重复 attach 会生成第二个附件条目（Zotero 本地 API 未按 web API 语义返回 412/exists）
 
 ### 阶段 4：DSH preset 封装
 - [ ] `interfaces/dsh-preset/`：cordis 组合 + Host 插件注册 7 个工具（lit_search / lit_abstract / lit_cited_by / lit_download_pdf / pdf_extract_text / zotero_search / zotero_save）+ persona

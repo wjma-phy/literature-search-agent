@@ -33,7 +33,7 @@ npm run typecheck
 npm test
 ```
 
-### CLI（阶段 1–2 已可用）
+### CLI（阶段 1–3 已可用）
 
 ```bash
 npm run build
@@ -44,12 +44,19 @@ node dist/interfaces/cli/index.js cited-by 10.1063/1.873242 --limit 25
 node dist/interfaces/cli/index.js abstract 10.1103/revmodphys.85.751 --pretty   # 摘要富集链
 node dist/interfaces/cli/index.js pdf 10.1371/journal.pcbi.1003285              # OA PDF 发现+下载
 node dist/interfaces/cli/index.js extract ./pdfs/<file>.pdf --max-pages 3       # 全文提取（截断）
+
+# Zotero（需 Zotero 10+ 运行中）
+node dist/interfaces/cli/index.js zotero-auth          # 弹窗点「始终允许」拿持久 key
+node dist/interfaces/cli/index.js zotero-search "ion acceleration"
+node dist/interfaces/cli/index.js zotero-save 10.1371/journal.pcbi.1003285 --note "<p>笔记</p>"
 ```
 
 可选环境变量（密钥只走环境变量，不入库）：
 - `LIT_SEARCH_OPENALEX_API_KEY`：OpenAlex 账户额度；无则退回 `LIT_SEARCH_MAILTO` polite pool，再退匿名池
 - `LIT_SEARCH_MAILTO`：OpenAlex polite pool / Crossref / Unpaywall 共用联系邮箱
 - `LIT_SEARCH_S2_API_KEY`：Semantic Scholar 独享 1 rps；无 key 走匿名共享池（429 频发）
+- `LIT_SEARCH_ZOTERO_KEY`：Zotero 持久写 key（`zotero-auth` 弹窗点「始终允许」获得）
+- `LIT_SEARCH_ZOTERO_URL`：Zotero 本地 API 地址（默认 `http://localhost:23119/api`）
 
 ## 实施路线
 

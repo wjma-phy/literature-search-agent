@@ -11,3 +11,4 @@ export * from './enrich/abstract.js';
 export * from './enrich/html.js';
 export * from './enrich/sources.js';
 export * from './pdf/index.js';
+export * from './zotero/index.js';
