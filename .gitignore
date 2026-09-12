@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.log
+*.tgz
 .DS_Store
 
 # 本地配置（API 联系邮箱、Zotero 授权 key 等）
