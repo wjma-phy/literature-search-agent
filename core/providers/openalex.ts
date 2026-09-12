@@ -9,6 +9,8 @@
  *   3. 都没有  → 匿名普通池（保守 2 rps）
  */
 
+import { record, text } from '../json.js';
+import { clampLimit, runSearchPipeline } from '../pipeline.js';
 import { dedupeWorks, normalizeDoi } from '../dedupe.js';
 import { ProviderError, RateLimiter, requestJson } from '../ratelimit.js';
 import type { SearchOptions, SearchResult, WorkItem } from '../types.js';
@@ -26,10 +28,6 @@ export interface OpenAlexOptions extends SearchOptions, OpenAlexAuth {
 
 type AuthTier = 'api_key' | 'mailto' | 'anonymous';
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
 /** OpenAlex 摘要的倒排索引还原为文本。 */
 export function invertOpenAlexAbstract(index: Record<string, number[]> | null | undefined): string {
   if (!index) return '';
@@ -38,10 +36,6 @@ export function invertOpenAlexAbstract(index: Record<string, number[]> | null | 
     for (const position of positions) words[position] = word;
   }
   return words.filter(Boolean).join(' ').trim();
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 /** OpenAlex work JSON → WorkItem；无标题返回 undefined。 */
@@ -124,20 +118,6 @@ function resultsOf(value: unknown): unknown[] {
   return Array.isArray(results) ? results : [];
 }
 
-function diagnostics(error: unknown): SearchResult['diagnostics'] {
-  return {
-    openalex: {
-      ok: false,
-      count: 0,
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
-}
-
-function clampLimit(limit: number | undefined, fallback: number): number {
-  return Math.min(Math.max(limit ?? fallback, 1), 200);
-}
-
 function yearFilter(options: SearchOptions): string {
   if (options.yearFrom && options.yearTo) return `publication_year:${options.yearFrom}-${options.yearTo}`;
   if (options.yearFrom) return `publication_year:>${options.yearFrom - 1}`;
@@ -149,7 +129,7 @@ function yearFilter(options: SearchOptions): string {
 export async function searchOpenAlex(query: string, options: OpenAlexOptions = {}): Promise<SearchResult> {
   const q = query.replace(/\s+/g, ' ').trim();
   if (!q) throw new ProviderError('检索词不能为空。', 'bad_request', false, 400);
-  const limit = clampLimit(options.limit, 10);
+  const limit = clampLimit(options.limit, 10, 200);
 
   const url = new URL(`${API_BASE}/works`);
   url.searchParams.set('search', q);
@@ -157,16 +137,13 @@ export async function searchOpenAlex(query: string, options: OpenAlexOptions = {
   const years = yearFilter(options);
   if (years) url.searchParams.set('filter', years);
 
-  try {
-    const value = await openAlexGet(url, options);
-    const items = dedupeWorks(resultsOf(value).flatMap((raw) => {
-      const item = mapOpenAlexWork(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { openalex: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics(error) };
-  }
+  return runSearchPipeline({
+    source: 'openalex',
+    limit,
+    rawsOf: resultsOf,
+    mapItem: mapOpenAlexWork,
+    fetch: () => openAlexGet(url, options),
+  });
 }
 
 /** 按 DOI 查单篇。找不到（404）返回 undefined；其他错误向上抛。 */
@@ -195,19 +172,16 @@ export async function citedByOpenAlex(doiOrOpenAlexId: string, options: OpenAlex
     openAlexId = work.externalIds.openalex;
   }
 
-  const limit = clampLimit(options.limit, 25);
+  const limit = clampLimit(options.limit, 25, 200);
   const url = new URL(`${API_BASE}/works`);
   url.searchParams.set('filter', `cites:${openAlexId}`);
   url.searchParams.set('per_page', String(limit));
 
-  try {
-    const value = await openAlexGet(url, options);
-    const items = dedupeWorks(resultsOf(value).flatMap((raw) => {
-      const item = mapOpenAlexWork(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { openalex: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics(error) };
-  }
+  return runSearchPipeline({
+    source: 'openalex',
+    limit,
+    rawsOf: resultsOf,
+    mapItem: mapOpenAlexWork,
+    fetch: () => openAlexGet(url, options),
+  });
 }

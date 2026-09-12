@@ -1,3 +1,82 @@
+// dist/core/json.js
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function text(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// dist/core/clean.js
+function cleanMarkup(value, options = {}) {
+  if (!value)
+    return "";
+  const nbsp = options.nbsp ?? true;
+  const extraEntities = options.extraEntities ?? false;
+  let out = value.replace(/<[^>]+>/g, " ");
+  if (nbsp)
+    out = out.replace(/&nbsp;/gi, " ");
+  out = out.replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">");
+  if (extraEntities)
+    out = out.replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
+  return out.replace(/\s+/g, " ").trim();
+}
+
+// dist/core/auth.js
+function pick(env, key) {
+  const value = env[key]?.trim();
+  return value ? value : void 0;
+}
+function parseEnvAuth(env) {
+  const apiKey = pick(env, "LIT_SEARCH_OPENALEX_API_KEY");
+  const mailto = pick(env, "LIT_SEARCH_MAILTO");
+  const s2Key = pick(env, "LIT_SEARCH_S2_API_KEY");
+  const zoteroKey = pick(env, "LIT_SEARCH_ZOTERO_KEY");
+  const zoteroUrl = pick(env, "LIT_SEARCH_ZOTERO_URL");
+  const coreUrl = pick(env, "LIT_SEARCH_CORE_URL");
+  return {
+    ...apiKey ? { apiKey } : {},
+    ...mailto ? { mailto } : {},
+    ...s2Key ? { s2Key } : {},
+    ...zoteroKey ? { zoteroKey } : {},
+    ...zoteroUrl ? { zoteroUrl } : {},
+    ...coreUrl ? { coreUrl } : {}
+  };
+}
+function openAlexAuth(auth) {
+  return {
+    ...auth.apiKey ? { apiKey: auth.apiKey } : {},
+    ...auth.mailto ? { mailto: auth.mailto } : {}
+  };
+}
+function s2Auth(auth) {
+  return auth.s2Key ? { apiKey: auth.s2Key } : {};
+}
+function crossrefAuth(auth) {
+  return auth.mailto ? { mailto: auth.mailto } : {};
+}
+function unpaywallAuth(auth) {
+  return auth.mailto ? { email: auth.mailto } : {};
+}
+function enrichAuth(auth) {
+  return {
+    ...auth.apiKey ? { openAlexApiKey: auth.apiKey } : {},
+    ...auth.s2Key ? { s2ApiKey: auth.s2Key } : {},
+    ...auth.mailto ? { mailto: auth.mailto } : {}
+  };
+}
+function pdfAuth(auth) {
+  return {
+    ...auth.apiKey ? { openAlexApiKey: auth.apiKey } : {},
+    ...auth.mailto ? { mailto: auth.mailto } : {}
+  };
+}
+function zoteroAuth(auth) {
+  return {
+    ...auth.zoteroKey ? { apiKey: auth.zoteroKey } : {},
+    ...auth.zoteroUrl ? { baseUrl: auth.zoteroUrl } : {}
+  };
+}
+
 // dist/core/dedupe.js
 function normalizeDoi(value) {
   return decodeURIComponent(value.trim()).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").replace(/^doi:\s*/i, "").replace(/[\s.,;:)>\]}]+$/, "").toLowerCase();
@@ -23,6 +102,56 @@ function dedupeWorks(items) {
     seen.add(key);
     return true;
   });
+}
+
+// dist/core/pipeline.js
+function clampLimit(limit, fallback, max = 200) {
+  return Math.min(Math.max(limit ?? fallback, 1), max);
+}
+function okDiagnostics(source, count) {
+  return { [source]: { ok: true, count } };
+}
+function errorDiagnostics(source, error) {
+  return {
+    [source]: { ok: false, count: 0, error: error instanceof Error ? error.message : String(error) }
+  };
+}
+async function runSearchPipeline(spec) {
+  try {
+    const value = await spec.fetch();
+    const items = dedupeWorks(spec.rawsOf(value).flatMap((raw) => {
+      const item = spec.mapItem(raw);
+      return item ? [item] : [];
+    })).slice(0, spec.limit);
+    return { items, diagnostics: okDiagnostics(spec.source, items.length) };
+  } catch (error) {
+    return { items: [], diagnostics: errorDiagnostics(spec.source, error) };
+  }
+}
+
+// dist/core/present.js
+function toSearchView(item, options = {}) {
+  const maxAuthors = options.maxAuthors ?? 5;
+  const maxAbstractChars = options.maxAbstractChars ?? 2e3;
+  const includeAbstract = options.includeAbstract ?? true;
+  const view = {
+    title: item.title,
+    authors: item.authors.slice(0, maxAuthors),
+    year: item.year,
+    venue: item.venue,
+    doi: item.doi,
+    url: item.url,
+    citationCount: item.citationCount,
+    oaPdfUrl: item.oaPdfUrl,
+    source: item.source
+  };
+  if (options.includeAuthorsTotal)
+    view.authorsTotal = item.authors.length;
+  if (includeAbstract) {
+    view.abstract = maxAbstractChars > 0 ? item.abstract.slice(0, maxAbstractChars) : item.abstract;
+    view.abstractStatus = item.abstractStatus;
+  }
+  return view;
 }
 
 // dist/core/ratelimit.js
@@ -132,9 +261,6 @@ async function requestText(url, options) {
 
 // dist/core/providers/openalex.js
 var API_BASE = "https://api.openalex.org";
-function record(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
 function invertOpenAlexAbstract(index) {
   if (!index)
     return "";
@@ -144,9 +270,6 @@ function invertOpenAlexAbstract(index) {
       words[position] = word;
   }
   return words.filter(Boolean).join(" ").trim();
-}
-function text(value) {
-  return typeof value === "string" ? value.trim() : "";
 }
 function mapOpenAlexWork(value) {
   const work = record(value);
@@ -222,18 +345,6 @@ function resultsOf(value) {
   const results = record(value).results;
   return Array.isArray(results) ? results : [];
 }
-function diagnostics(error) {
-  return {
-    openalex: {
-      ok: false,
-      count: 0,
-      error: error instanceof Error ? error.message : String(error)
-    }
-  };
-}
-function clampLimit(limit, fallback) {
-  return Math.min(Math.max(limit ?? fallback, 1), 200);
-}
 function yearFilter(options) {
   if (options.yearFrom && options.yearTo)
     return `publication_year:${options.yearFrom}-${options.yearTo}`;
@@ -247,23 +358,20 @@ async function searchOpenAlex(query, options = {}) {
   const q = query.replace(/\s+/g, " ").trim();
   if (!q)
     throw new ProviderError("\u68C0\u7D22\u8BCD\u4E0D\u80FD\u4E3A\u7A7A\u3002", "bad_request", false, 400);
-  const limit = clampLimit(options.limit, 10);
+  const limit = clampLimit(options.limit, 10, 200);
   const url = new URL(`${API_BASE}/works`);
   url.searchParams.set("search", q);
   url.searchParams.set("per_page", String(limit));
   const years = yearFilter(options);
   if (years)
     url.searchParams.set("filter", years);
-  try {
-    const value = await openAlexGet(url, options);
-    const items = dedupeWorks(resultsOf(value).flatMap((raw) => {
-      const item = mapOpenAlexWork(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { openalex: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics(error) };
-  }
+  return runSearchPipeline({
+    source: "openalex",
+    limit,
+    rawsOf: resultsOf,
+    mapItem: mapOpenAlexWork,
+    fetch: () => openAlexGet(url, options)
+  });
 }
 async function lookupOpenAlexByDoi(doi, options = {}) {
   const normalized = normalizeDoi(doi);
@@ -285,64 +393,55 @@ async function citedByOpenAlex(doiOrOpenAlexId, options = {}) {
     }
     openAlexId = work.externalIds.openalex;
   }
-  const limit = clampLimit(options.limit, 25);
+  const limit = clampLimit(options.limit, 25, 200);
   const url = new URL(`${API_BASE}/works`);
   url.searchParams.set("filter", `cites:${openAlexId}`);
   url.searchParams.set("per_page", String(limit));
-  try {
-    const value = await openAlexGet(url, options);
-    const items = dedupeWorks(resultsOf(value).flatMap((raw) => {
-      const item = mapOpenAlexWork(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { openalex: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics(error) };
-  }
+  return runSearchPipeline({
+    source: "openalex",
+    limit,
+    rawsOf: resultsOf,
+    mapItem: mapOpenAlexWork,
+    fetch: () => openAlexGet(url, options)
+  });
 }
 
 // dist/core/providers/semanticscholar.js
 var API_BASE2 = "https://api.semanticscholar.org/graph/v1";
 var FIELDS = "title,authors.name,year,venue,externalIds,abstract,citationCount,openAccessPdf,url";
-function record2(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function text2(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
 function mapS2Paper(value) {
-  const paper = record2(value);
-  const title = text2(paper.title);
+  const paper = record(value);
+  const title = text(paper.title);
   if (!title)
     return void 0;
   const authors = (Array.isArray(paper.authors) ? paper.authors : []).flatMap((entry) => {
-    const name = text2(record2(entry).name);
+    const name = text(record(entry).name);
     return name ? [name] : [];
   });
-  const ids = record2(paper.externalIds);
-  const doi = text2(ids.DOI) ? normalizeDoi(text2(ids.DOI)) : "";
-  const oaPdf = record2(paper.openAccessPdf);
+  const ids = record(paper.externalIds);
+  const doi = text(ids.DOI) ? normalizeDoi(text(ids.DOI)) : "";
+  const oaPdf = record(paper.openAccessPdf);
   const externalIds = {};
-  const paperId = text2(paper.paperId);
+  const paperId = text(paper.paperId);
   if (paperId)
     externalIds.s2 = paperId;
   if (doi)
     externalIds.doi = doi;
-  const arxiv = text2(ids.ArXiv);
+  const arxiv = text(ids.ArXiv);
   if (arxiv)
     externalIds.arxiv = arxiv;
-  const abstract = text2(paper.abstract).replace(/\s+/g, " ").slice(0, 1e5);
+  const abstract = text(paper.abstract).replace(/\s+/g, " ").slice(0, 1e5);
   return {
     title,
     authors: [...new Set(authors)].slice(0, 30),
     year: typeof paper.year === "number" ? paper.year : null,
-    venue: text2(paper.venue),
+    venue: text(paper.venue),
     doi,
-    url: text2(paper.url),
+    url: text(paper.url),
     citationCount: typeof paper.citationCount === "number" && paper.citationCount >= 0 ? paper.citationCount : null,
     abstract,
     abstractStatus: abstract ? "complete" : "pending",
-    oaPdfUrl: text2(oaPdf.url),
+    oaPdfUrl: text(oaPdf.url),
     source: "semanticscholar",
     externalIds
   };
@@ -367,20 +466,15 @@ async function s2Get(url, options) {
     ...options.signal !== void 0 ? { signal: options.signal } : {}
   });
 }
-function diagnostics2(error) {
-  return {
-    semanticscholar: {
-      ok: false,
-      count: 0,
-      error: error instanceof Error ? error.message : String(error)
-    }
-  };
+function s2Data(value) {
+  const data = record(value).data;
+  return Array.isArray(data) ? data : [];
 }
 async function searchSemanticScholar(query, options = {}) {
   const q = query.replace(/\s+/g, " ").trim();
   if (!q)
     throw new ProviderError("\u68C0\u7D22\u8BCD\u4E0D\u80FD\u4E3A\u7A7A\u3002", "bad_request", false, 400);
-  const limit = Math.min(Math.max(options.limit ?? 10, 1), 100);
+  const limit = clampLimit(options.limit, 10, 100);
   const url = new URL(`${API_BASE2}/paper/search`);
   url.searchParams.set("query", q);
   url.searchParams.set("limit", String(limit));
@@ -388,17 +482,13 @@ async function searchSemanticScholar(query, options = {}) {
   if (options.yearFrom || options.yearTo) {
     url.searchParams.set("year", `${options.yearFrom ?? ""}-${options.yearTo ?? ""}`);
   }
-  try {
-    const value = await s2Get(url, options);
-    const data = record2(value).data;
-    const items = dedupeWorks((Array.isArray(data) ? data : []).flatMap((raw) => {
-      const item = mapS2Paper(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { semanticscholar: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics2(error) };
-  }
+  return runSearchPipeline({
+    source: "semanticscholar",
+    limit,
+    rawsOf: s2Data,
+    mapItem: mapS2Paper,
+    fetch: () => s2Get(url, options)
+  });
 }
 async function lookupS2ByDoi(doi, options = {}) {
   const normalized = normalizeDoi(doi);
@@ -412,41 +502,33 @@ async function lookupS2ByDoi(doi, options = {}) {
 
 // dist/core/providers/crossref.js
 var API_BASE3 = "https://api.crossref.org";
-function record3(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function text3(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
 function cleanCrossrefAbstract(value) {
-  if (!value)
-    return "";
-  return value.replace(/<[^>]+>/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim();
+  return cleanMarkup(value, { nbsp: false, extraEntities: true });
 }
 function mapCrossrefWork(value) {
-  const message = record3(value);
+  const message = record(value);
   const titleField = message.title;
-  const title = Array.isArray(titleField) ? text3(titleField[0]) : text3(titleField);
+  const title = Array.isArray(titleField) ? text(titleField[0]) : text(titleField);
   if (!title)
     return void 0;
   const authors = (Array.isArray(message.author) ? message.author : []).flatMap((entry) => {
-    const author = record3(entry);
+    const author = record(entry);
     const name = [author.given, author.family].filter((part) => typeof part === "string").join(" ").trim();
     return name ? [name] : [];
   });
-  const published = record3(message.published);
+  const published = record(message.published);
   const dateParts = Array.isArray(published["date-parts"]) ? published["date-parts"] : [];
   const firstDate = dateParts[0];
   const year = typeof firstDate?.[0] === "number" ? firstDate[0] : null;
   const containerTitle = message["container-title"];
-  const venue = Array.isArray(containerTitle) ? text3(containerTitle[0]) : "";
-  const doi = text3(message.DOI) ? normalizeDoi(text3(message.DOI)) : "";
-  const abstract = cleanCrossrefAbstract(text3(message.abstract) || void 0).slice(0, 1e5);
+  const venue = Array.isArray(containerTitle) ? text(containerTitle[0]) : "";
+  const doi = text(message.DOI) ? normalizeDoi(text(message.DOI)) : "";
+  const abstract = cleanCrossrefAbstract(text(message.abstract) || void 0).slice(0, 1e5);
   const oaPdfUrl = (Array.isArray(message.link) ? message.link : []).flatMap((entry) => {
-    const link = record3(entry);
-    if (!/application\/pdf/i.test(text3(link["content-type"])))
+    const link = record(entry);
+    if (!/application\/pdf/i.test(text(link["content-type"])))
       return [];
-    const url = text3(link.URL);
+    const url = text(link.URL);
     return url ? [url.replace(/^http:/i, "https:")] : [];
   })[0] ?? "";
   const externalIds = {};
@@ -458,7 +540,7 @@ function mapCrossrefWork(value) {
     year,
     venue,
     doi,
-    url: text3(message.URL),
+    url: text(message.URL),
     citationCount: typeof message["is-referenced-by-count"] === "number" ? message["is-referenced-by-count"] : null,
     abstract,
     abstractStatus: abstract ? "complete" : "pending",
@@ -488,24 +570,15 @@ async function crossrefGet(url, options) {
     ...options.signal !== void 0 ? { signal: options.signal } : {}
   });
 }
-function diagnostics3(error) {
-  return {
-    crossref: {
-      ok: false,
-      count: 0,
-      error: error instanceof Error ? error.message : String(error)
-    }
-  };
-}
 function messageItems(value) {
-  const items = record3(record3(value).message).items;
+  const items = record(record(value).message).items;
   return Array.isArray(items) ? items : [];
 }
 async function searchCrossref(query, options = {}) {
   const q = query.replace(/\s+/g, " ").trim();
   if (!q)
     throw new ProviderError("\u68C0\u7D22\u8BCD\u4E0D\u80FD\u4E3A\u7A7A\u3002", "bad_request", false, 400);
-  const limit = Math.min(Math.max(options.limit ?? 10, 1), 100);
+  const limit = clampLimit(options.limit, 10, 100);
   const url = new URL(`${API_BASE3}/works`);
   url.searchParams.set("query.bibliographic", q);
   const author = options.author?.trim();
@@ -519,16 +592,13 @@ async function searchCrossref(query, options = {}) {
     filters.push(`until-pub-date:${options.yearTo}-12-31`);
   if (filters.length)
     url.searchParams.set("filter", filters.join(","));
-  try {
-    const value = await crossrefGet(url, options);
-    const items = dedupeWorks(messageItems(value).flatMap((raw) => {
-      const item = mapCrossrefWork(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { crossref: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics3(error) };
-  }
+  return runSearchPipeline({
+    source: "crossref",
+    limit,
+    rawsOf: messageItems,
+    mapItem: mapCrossrefWork,
+    fetch: () => crossrefGet(url, options)
+  });
 }
 async function lookupCrossrefByDoi(doi, options = {}) {
   const normalized = normalizeDoi(doi);
@@ -536,23 +606,17 @@ async function lookupCrossrefByDoi(doi, options = {}) {
     throw new ProviderError("DOI \u4E0D\u80FD\u4E3A\u7A7A\u3002", "bad_request", false, 400);
   const url = new URL(`${API_BASE3}/works/${encodeURIComponent(normalized)}`);
   const value = await crossrefGet(url, options);
-  return value === void 0 ? void 0 : mapCrossrefWork(record3(value).message);
+  return value === void 0 ? void 0 : mapCrossrefWork(record(value).message);
 }
 
 // dist/core/providers/unpaywall.js
-function record4(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function text4(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
 function mapLocation(value, isBest) {
-  const location = record4(value);
+  const location = record(value);
   return {
-    pdfUrl: text4(location.url_for_pdf),
-    landingUrl: text4(location.url_for_landing_page) || text4(location.url),
-    hostType: text4(location.host_type),
-    license: text4(location.license),
+    pdfUrl: text(location.url_for_pdf),
+    landingUrl: text(location.url_for_landing_page) || text(location.url),
+    hostType: text(location.host_type),
+    license: text(location.license),
     isBest
   };
 }
@@ -574,7 +638,7 @@ async function lookupUnpaywall(doi, options = {}) {
   });
   if (value === void 0)
     return void 0;
-  const raw = record4(value);
+  const raw = record(value);
   const best = raw.best_oa_location;
   const locations = [];
   if (best && typeof best === "object")
@@ -595,9 +659,6 @@ async function lookupUnpaywall(doi, options = {}) {
 }
 
 // dist/core/enrich/html.js
-function cleanMarkup(value) {
-  return value.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/\s+/g, " ").trim();
-}
 function safeOpenAccessUrl(value) {
   if (!value)
     return void 0;
@@ -651,12 +712,6 @@ async function openAccessHtmlAbstract(pageUrl, options = {}) {
 }
 
 // dist/core/enrich/sources.js
-function record5(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function cleanMarkup2(value) {
-  return value.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/\s+/g, " ").trim();
-}
 var europePmcLimiter = new RateLimiter({ intervalMs: 200 });
 var arxivLimiter = new RateLimiter({ intervalMs: 3e3 });
 async function europePmcAbstract(doi, options = {}) {
@@ -671,9 +726,9 @@ async function europePmcAbstract(doi, options = {}) {
     ...options.fetchImpl !== void 0 ? { fetchImpl: options.fetchImpl } : {},
     ...options.signal !== void 0 ? { signal: options.signal } : {}
   });
-  const resultList = record5(record5(value).resultList).result;
-  const first = record5(Array.isArray(resultList) ? resultList[0] : void 0);
-  const abstract = typeof first.abstractText === "string" ? cleanMarkup2(first.abstractText) : "";
+  const resultList = record(record(value).resultList).result;
+  const first = record(Array.isArray(resultList) ? resultList[0] : void 0);
+  const abstract = typeof first.abstractText === "string" ? cleanMarkup(first.abstractText) : "";
   return abstract.slice(0, 1e5);
 }
 async function arxivAbstract(doi, options = {}) {
@@ -687,7 +742,7 @@ async function arxivAbstract(doi, options = {}) {
     ...options.signal !== void 0 ? { signal: options.signal } : {}
   });
   const summary = xml.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i)?.[1] || "";
-  return cleanMarkup2(summary).slice(0, 1e5);
+  return cleanMarkup(summary).slice(0, 1e5);
 }
 
 // dist/core/enrich/abstract.js
@@ -870,11 +925,11 @@ async function pdfParseExtract(data, maxPages) {
 async function extractPdfText(input, options = {}) {
   const data = typeof input === "string" ? new Uint8Array(await readFile(input)) : input;
   const extractor = options.extractor ?? pdfParseExtract;
-  const { text: text5, pageCount, parsedPages } = await extractor(data, options.maxPages);
+  const { text: text2, pageCount, parsedPages } = await extractor(data, options.maxPages);
   const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
-  const truncated = text5.length > maxChars;
+  const truncated = text2.length > maxChars;
   return {
-    text: truncated ? text5.slice(0, maxChars) : text5,
+    text: truncated ? text2.slice(0, maxChars) : text2,
     pageCount,
     parsedPages,
     truncated
@@ -897,9 +952,6 @@ var ZoteroApiError = class extends Error {
     this.name = "ZoteroApiError";
   }
 };
-function record6(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
 function extractYear(dateStr) {
   const match = String(dateStr ?? "").match(/(19|20)\d{2}/);
   return match ? parseInt(match[0], 10) : null;
@@ -908,7 +960,7 @@ function creatorsToAuthors(creators) {
   if (!Array.isArray(creators))
     return [];
   return creators.flatMap((c) => {
-    const creator = record6(c);
+    const creator = record(c);
     if (typeof creator.name === "string" && creator.name)
       return [creator.name];
     const name = [creator.firstName, creator.lastName].filter((p) => typeof p === "string" && Boolean(p)).join(" ");
@@ -1038,7 +1090,7 @@ var ZoteroClient = class {
       throw new ZoteroApiError("\u7528\u6237\u62D2\u7EDD\u4E86\u5199\u5165\u6388\u6743\u3002", "denied", 403);
     if (!res.ok)
       throw new ZoteroApiError(`\u6388\u6743\u5931\u8D25\uFF08HTTP ${res.status}\uFF09\u3002\u5199\u5165\u9700\u8981 Zotero ${MIN_WRITE_MAJOR_VERSION}+\u3002`, "version", res.status);
-    const data = record6(await res.json());
+    const data = record(await res.json());
     if (typeof data.key !== "string" || !data.key)
       throw new ZoteroApiError("\u6388\u6743\u54CD\u5E94\u7F3A\u5C11 key\u3002", "http");
     this.apiKey = data.key;
@@ -1057,8 +1109,8 @@ var ZoteroClient = class {
     const qmode = options.qmode ? `&qmode=${options.qmode}` : "";
     const value = await this.get(`${prefix}/items?q=${encodeURIComponent(query)}${qmode}&itemType=-attachment%20%7C%7C%20note%20%7C%7C%20annotation&limit=${limit}`);
     return (Array.isArray(value) ? value : []).map((entry) => {
-      const item = record6(entry);
-      const data = record6(item.data);
+      const item = record(entry);
+      const data = record(item.data);
       return {
         key: typeof item.key === "string" ? item.key : "",
         libraryKey: options.libraryKey ?? "user",
@@ -1091,24 +1143,24 @@ var ZoteroClient = class {
       tags: [],
       collections: options.collectionKey ? [options.collectionKey] : []
     };
-    const res = record6(await this.post(`${libraryPrefix(options.libraryKey)}/items`, [data], { write: true }));
-    const successful = record6(res.successful);
-    const first = record6(successful["0"]);
+    const res = record(await this.post(`${libraryPrefix(options.libraryKey)}/items`, [data], { write: true }));
+    const successful = record(res.successful);
+    const first = record(successful["0"]);
     if (typeof first.key !== "string" || !first.key) {
-      const failed = record6(record6(res.failed)["0"]);
+      const failed = record(record(res.failed)["0"]);
       throw new ZoteroApiError(`\u521B\u5EFA\u6761\u76EE\u5931\u8D25: ${typeof failed.message === "string" ? failed.message : JSON.stringify(res).slice(0, 200)}`, "http");
     }
     return { itemKey: first.key };
   }
   /** 在条目下创建子笔记。 */
   async createNote(parentItemKey, content, options = {}) {
-    const res = record6(await this.post(`${libraryPrefix(options.libraryKey)}/items`, [{
+    const res = record(await this.post(`${libraryPrefix(options.libraryKey)}/items`, [{
       itemType: "note",
       parentItem: parentItemKey,
       note: content,
       tags: []
     }], { write: true }));
-    const key = record6(record6(res.successful)["0"]).key;
+    const key = record(record(res.successful)["0"]).key;
     if (typeof key !== "string" || !key)
       throw new ZoteroApiError("\u521B\u5EFA\u7B14\u8BB0\u5931\u8D25\u3002", "http");
     return { noteKey: key };
@@ -1116,8 +1168,8 @@ var ZoteroClient = class {
   /** 加入收藏夹（读当前 collections 取并集，If-Unmodified-Since-Version 乐观锁）。 */
   async addToCollection(itemKey, collectionKey, options = {}) {
     const prefix = libraryPrefix(options.libraryKey);
-    const current = record6(await this.get(`${prefix}/items/${encodeURIComponent(itemKey)}`));
-    const data = record6(current.data);
+    const current = record(await this.get(`${prefix}/items/${encodeURIComponent(itemKey)}`));
+    const data = record(current.data);
     const existing = new Set(Array.isArray(data.collections) ? data.collections : []);
     existing.add(collectionKey);
     await this.patch(`${prefix}/items/${encodeURIComponent(itemKey)}`, { collections: [...existing] }, {
@@ -1138,7 +1190,7 @@ var ZoteroClient = class {
     const filename = basename(filePath);
     const md5 = createHash("md5").update(fileBytes).digest("hex");
     const mtime = Math.round(fileStat.mtimeMs);
-    const created = record6(await this.post(`${prefix}/items`, [{
+    const created = record(await this.post(`${prefix}/items`, [{
       itemType: "attachment",
       linkMode: "imported_file",
       parentItem: parentItemKey,
@@ -1148,7 +1200,7 @@ var ZoteroClient = class {
       md5: null,
       mtime: null
     }], { write: true }));
-    const attachKey = record6(record6(created.successful)["0"]).key;
+    const attachKey = record(record(created.successful)["0"]).key;
     if (typeof attachKey !== "string" || !attachKey) {
       throw new ZoteroApiError(`\u521B\u5EFA\u9644\u4EF6\u6761\u76EE\u5931\u8D25: ${JSON.stringify(created).slice(0, 200)}`, "http");
     }
@@ -1158,7 +1210,7 @@ var ZoteroClient = class {
       headers: { "Content-Type": "application/x-www-form-urlencoded", "If-None-Match": "*" },
       body: new URLSearchParams({ md5, filename, filesize: String(fileBytes.byteLength), mtime: String(mtime) }).toString()
     });
-    const auth = record6(await authRes.json());
+    const auth = record(await authRes.json());
     if (auth.exists)
       return { attachmentKey: attachKey, duplicate: true };
     const uploadUrl = typeof auth.url === "string" && auth.url ? auth.url.startsWith("http") ? auth.url : `${this.baseUrl}${auth.url}` : `${this.baseUrl}${prefix}/items/${attachKey}/file`;
@@ -1184,7 +1236,7 @@ var ZoteroClient = class {
   /** 删除条目（进回收站；If-Unmodified-Since-Version 乐观锁）。主要供测试清理。 */
   async deleteItem(itemKey, options = {}) {
     const prefix = libraryPrefix(options.libraryKey);
-    const current = record6(await this.get(`${prefix}/items/${encodeURIComponent(itemKey)}`));
+    const current = record(await this.get(`${prefix}/items/${encodeURIComponent(itemKey)}`));
     await this.request("DELETE", `${prefix}/items/${encodeURIComponent(itemKey)}`, {
       write: true,
       raw: true,
@@ -1280,11 +1332,16 @@ export {
   ZoteroClient,
   arxivAbstract,
   citedByOpenAlex,
+  clampLimit,
   cleanCrossrefAbstract,
+  cleanMarkup,
+  crossrefAuth,
   dedupeWorks,
   discoverOaPdfUrl,
   downloadPdf,
   enrichAbstract,
+  enrichAuth,
+  errorDiagnostics,
   europePmcAbstract,
   extractDoi,
   extractPdfText,
@@ -1300,9 +1357,16 @@ export {
   mapOpenAlexWork,
   mapS2Paper,
   normalizeDoi,
+  okDiagnostics,
   openAccessHtmlAbstract,
+  openAlexAuth,
+  parseEnvAuth,
+  pdfAuth,
+  record,
   requestJson,
   requestText,
+  runSearchPipeline,
+  s2Auth,
   safeOpenAccessUrl,
   saveWork,
   searchCrossref,
@@ -1310,6 +1374,10 @@ export {
   searchSemanticScholar,
   splitAuthorName,
   streamPdfToFile,
+  text,
   titlesAlign,
-  workToZoteroFields
+  toSearchView,
+  unpaywallAuth,
+  workToZoteroFields,
+  zoteroAuth
 };

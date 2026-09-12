@@ -16,56 +16,42 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
+  ZoteroClient,
   citedByOpenAlex,
+  crossrefAuth,
   discoverOaPdfUrl,
   downloadPdf,
   enrichAbstract,
+  enrichAuth,
   extractPdfText,
   lookupCrossrefByDoi,
   lookupOpenAlexByDoi,
   lookupS2ByDoi,
+  openAlexAuth,
+  parseEnvAuth,
+  pdfAuth,
+  s2Auth,
   saveWork,
   searchCrossref,
   searchOpenAlex,
   searchSemanticScholar,
-  ZoteroClient,
+  zoteroAuth,
 } from '../../core/index.js';
-import type { SearchResult, WorkItem } from '../../core/index.js';
+import type { EnvAuth, SearchResult, WorkItem } from '../../core/index.js';
 
-interface CliAuth {
-  openAlexApiKey?: string;
-  s2ApiKey?: string;
-  mailto?: string;
-  zoteroKey?: string;
-  zoteroUrl?: string;
-}
-
-function authFromEnv(): CliAuth {
-  const auth: CliAuth = {};
-  const openAlexApiKey = process.env.LIT_SEARCH_OPENALEX_API_KEY?.trim();
-  const s2ApiKey = process.env.LIT_SEARCH_S2_API_KEY?.trim();
-  const mailto = process.env.LIT_SEARCH_MAILTO?.trim();
-  const zoteroKey = process.env.LIT_SEARCH_ZOTERO_KEY?.trim();
-  const zoteroUrl = process.env.LIT_SEARCH_ZOTERO_URL?.trim();
-  if (openAlexApiKey) auth.openAlexApiKey = openAlexApiKey;
-  if (s2ApiKey) auth.s2ApiKey = s2ApiKey;
-  if (mailto) auth.mailto = mailto;
-  if (zoteroKey) auth.zoteroKey = zoteroKey;
-  if (zoteroUrl) auth.zoteroUrl = zoteroUrl;
-  if (!openAlexApiKey && !mailto) {
+function warnMissingPolitePool(auth: EnvAuth): void {
+  if (!auth.apiKey && !auth.mailto) {
     process.stderr.write(
       '[lit-search] 提示：未配置 LIT_SEARCH_OPENALEX_API_KEY / LIT_SEARCH_MAILTO，使用 OpenAlex 匿名池（较慢）。\n',
     );
   }
-  return auth;
 }
 
-function zoteroClient(auth: CliAuth): ZoteroClient {
+function zoteroClient(auth: EnvAuth): ZoteroClient {
   return new ZoteroClient({
-    ...(auth.zoteroUrl ? { baseUrl: auth.zoteroUrl } : {}),
-    ...(auth.zoteroKey ? { apiKey: auth.zoteroKey } : {}),
     // CLI 是短生命周期进程；remember=false 的 key 跨进程失效，遇 401 直接弹窗重授权
     autoAuthorize: true,
+    ...zoteroAuth(auth),
   });
 }
 
@@ -113,46 +99,28 @@ function parsePositiveInt(value: string | undefined, flag: string): number {
   return n;
 }
 
-async function searchBySource(source: string, query: string, auth: CliAuth, opts: {
+async function searchBySource(source: string, query: string, auth: EnvAuth, opts: {
   limit: number;
   yearFrom?: number;
   yearTo?: number;
 }): Promise<SearchResult> {
-  if (source === 'openalex') {
-    return searchOpenAlex(query, {
-      ...opts,
-      ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-      ...(auth.mailto ? { mailto: auth.mailto } : {}),
-    });
-  }
-  if (source === 's2') {
-    return searchSemanticScholar(query, { ...opts, ...(auth.s2ApiKey ? { apiKey: auth.s2ApiKey } : {}) });
-  }
-  if (source === 'crossref') {
-    return searchCrossref(query, { ...opts, ...(auth.mailto ? { mailto: auth.mailto } : {}) });
-  }
+  if (source === 'openalex') return searchOpenAlex(query, { ...opts, ...openAlexAuth(auth) });
+  if (source === 's2') return searchSemanticScholar(query, { ...opts, ...s2Auth(auth) });
+  if (source === 'crossref') return searchCrossref(query, { ...opts, ...crossrefAuth(auth) });
   return fail(`未知数据源 "${source}"（可选 openalex|s2|crossref）。`, 2);
 }
 
-async function lookupBySource(source: string, doi: string, auth: CliAuth): Promise<WorkItem | undefined> {
-  if (source === 'openalex') {
-    return lookupOpenAlexByDoi(doi, {
-      ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-      ...(auth.mailto ? { mailto: auth.mailto } : {}),
-    });
-  }
-  if (source === 's2') {
-    return lookupS2ByDoi(doi, { ...(auth.s2ApiKey ? { apiKey: auth.s2ApiKey } : {}) });
-  }
-  if (source === 'crossref') {
-    return lookupCrossrefByDoi(doi, { ...(auth.mailto ? { mailto: auth.mailto } : {}) });
-  }
+async function lookupBySource(source: string, doi: string, auth: EnvAuth): Promise<WorkItem | undefined> {
+  if (source === 'openalex') return lookupOpenAlexByDoi(doi, openAlexAuth(auth));
+  if (source === 's2') return lookupS2ByDoi(doi, s2Auth(auth));
+  if (source === 'crossref') return lookupCrossrefByDoi(doi, crossrefAuth(auth));
   return fail(`未知数据源 "${source}"（可选 openalex|s2|crossref）。`, 2);
 }
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
-  const auth = authFromEnv();
+  const auth = parseEnvAuth(process.env);
+  warnMissingPolitePool(auth);
 
   if (command === 'search') {
     const { values, positionals } = parseArgs({
@@ -210,11 +178,7 @@ async function main(): Promise<void> {
     const id = positionals[0];
     if (!id) usage();
     const limit = parsePositiveInt(values.limit, 'limit');
-    const result = await citedByOpenAlex(id, {
-      limit,
-      ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-      ...(auth.mailto ? { mailto: auth.mailto } : {}),
-    });
+    const result = await citedByOpenAlex(id, { limit, ...openAlexAuth(auth) });
     printJson(result, values.pretty);
     if (!result.diagnostics.openalex?.ok) process.exitCode = 1;
     return;
@@ -232,11 +196,7 @@ async function main(): Promise<void> {
     const isDoi = /^(?:https?:\/\/(?:dx\.)?doi\.org\/)?10\.\d{4,9}\//i.test(input);
     const result = await enrichAbstract(
       isDoi ? { doi: input, title: '' } : { title: input },
-      {
-        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-        ...(auth.s2ApiKey ? { s2ApiKey: auth.s2ApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-      },
+      enrichAuth(auth),
     );
     printJson(result, values.pretty);
     if (result.status === 'missing') process.exitCode = 1;
@@ -251,13 +211,7 @@ async function main(): Promise<void> {
     });
     const doi = positionals[0];
     if (!doi) usage();
-    const url = await discoverOaPdfUrl(
-      { doi, oaPdfUrl: '' },
-      {
-        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-      },
-    );
+    const url = await discoverOaPdfUrl({ doi, oaPdfUrl: '' }, pdfAuth(auth));
     if (!url) fail(`未找到 DOI "${doi}" 的 OA PDF（可能非开放获取）。`, 1);
     const dest = values.out ?? `./pdfs/${doi.replace(/[^\w.-]+/g, '_')}.pdf`;
     const result = await downloadPdf(url, dest);
@@ -335,16 +289,9 @@ async function main(): Promise<void> {
     if (!doi) usage();
 
     // 1. 取元数据（OpenAlex 为主，失败时富集链兜底摘要）
-    let work = await lookupOpenAlexByDoi(doi, {
-      ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-      ...(auth.mailto ? { mailto: auth.mailto } : {}),
-    }).catch(() => undefined);
+    let work = await lookupOpenAlexByDoi(doi, openAlexAuth(auth)).catch(() => undefined);
     if (!work) {
-      const enriched = await enrichAbstract({ doi, title: '' }, {
-        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-        ...(auth.s2ApiKey ? { s2ApiKey: auth.s2ApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-      });
+      const enriched = await enrichAbstract({ doi, title: '' }, enrichAuth(auth));
       if (!enriched.doi) fail(`无法解析 DOI "${doi}"。`, 1);
       work = {
         title: doi, authors: [], year: null, venue: '', doi: enriched.doi, url: '',
@@ -352,11 +299,7 @@ async function main(): Promise<void> {
         oaPdfUrl: '', source: 'enrich', externalIds: {},
       };
     } else if (!work.abstract) {
-      const enriched = await enrichAbstract({ doi: work.doi, title: work.title }, {
-        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-        ...(auth.s2ApiKey ? { s2ApiKey: auth.s2ApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-      });
+      const enriched = await enrichAbstract({ doi: work.doi, title: work.title }, enrichAuth(auth));
       if (enriched.abstract) {
         work = { ...work, abstract: enriched.abstract, abstractStatus: 'complete' };
       }
@@ -366,10 +309,7 @@ async function main(): Promise<void> {
     let pdfPath: string | undefined;
     let tmpDir: string | undefined;
     if (!values['no-pdf']) {
-      const url = work.oaPdfUrl || await discoverOaPdfUrl(work, {
-        ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-      });
+      const url = work.oaPdfUrl || await discoverOaPdfUrl(work, pdfAuth(auth));
       if (url) {
         tmpDir = await mkdtemp(join(tmpdir(), 'lit-search-zotero-'));
         try {

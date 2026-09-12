@@ -3,26 +3,13 @@
  * 移植自 Idea-Studio core/retrieval/providers.ts 的 europePmcAbstract / arxivAbstract。
  */
 
+import { record } from '../json.js';
+import { cleanMarkup } from '../clean.js';
 import { RateLimiter, requestJson, requestText } from '../ratelimit.js';
 
 export interface SourceOptions {
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function cleanMarkup(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 const europePmcLimiter = new RateLimiter({ intervalMs: 200 });

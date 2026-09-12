@@ -6,41 +6,17 @@
  * 因此本包安装后无需 literature-search-agent 源码或 dist/ 目录。
  * pdf-parse 为可选运行时依赖，仅在 PDF 全文提取时惰性加载。
  *
- * 认证从环境变量注入：LIT_SEARCH_OPENALEX_API_KEY / LIT_SEARCH_MAILTO。
+ * 认证从环境变量注入：LIT_SEARCH_OPENALEX_API_KEY / LIT_SEARCH_MAILTO（统一解析在 core/auth）。
  */
 
-import { searchOpenAlex } from './vendor/lit-core.bundle.js';
+import { openAlexAuth, parseEnvAuth, searchOpenAlex, toSearchView } from './vendor/lit-core.bundle.js';
 
 const ROUTE = '/lit-search/api/search';
-
-function authFromEnv() {
-  const auth = {};
-  const apiKey = (process.env.LIT_SEARCH_OPENALEX_API_KEY || '').trim();
-  const mailto = (process.env.LIT_SEARCH_MAILTO || '').trim();
-  if (apiKey) auth.apiKey = apiKey;
-  if (mailto) auth.mailto = mailto;
-  return auth;
-}
 
 function clampLimit(raw) {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) return 10;
   return Math.min(n, 25);
-}
-
-function trimItem(w) {
-  return {
-    title: String(w.title || ''),
-    authors: Array.isArray(w.authors) ? w.authors.slice(0, 4) : [],
-    authorsTotal: Array.isArray(w.authors) ? w.authors.length : 0,
-    year: typeof w.year === 'number' ? w.year : null,
-    venue: String(w.venue || ''),
-    doi: String(w.doi || ''),
-    url: String(w.url || ''),
-    citationCount: typeof w.citationCount === 'number' ? w.citationCount : null,
-    oaPdfUrl: String(w.oaPdfUrl || ''),
-    source: String(w.source || ''),
-  };
 }
 
 function sendJson(res, status, body) {
@@ -73,13 +49,13 @@ export default {
           const yearTo = url.searchParams.get('to');
           const result = await searchOpenAlex(query, {
             limit,
-            ...authFromEnv(),
+            ...openAlexAuth(parseEnvAuth(process.env)),
             ...(yearFrom ? { yearFrom: Number(yearFrom) } : {}),
             ...(yearTo ? { yearTo: Number(yearTo) } : {}),
           });
           sendJson(res, 200, {
             ok: true,
-            items: result.items.map(trimItem),
+            items: result.items.map((w) => toSearchView(w, { maxAuthors: 4, includeAuthorsTotal: true, includeAbstract: false })),
             diagnostics: result.diagnostics,
           });
         } catch (error) {

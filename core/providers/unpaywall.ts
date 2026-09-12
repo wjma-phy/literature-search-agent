@@ -4,6 +4,7 @@
  * 需要 email（Unpaywall 强制要求 ?email=）。节流 100ms（上限 10 万次/天）。
  */
 
+import { record, text } from '../json.js';
 import { normalizeDoi } from '../dedupe.js';
 import { ProviderError, RateLimiter, requestJson } from '../ratelimit.js';
 
@@ -33,14 +34,6 @@ export interface UnpaywallOptions {
   email?: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 function mapLocation(value: unknown, isBest: boolean): UnpaywallLocation {

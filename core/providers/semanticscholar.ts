@@ -7,6 +7,8 @@
  *   - 无 key → 匿名共享池，保守 3s 间隔（官方约 100 次/5 分钟，且常 429）
  */
 
+import { record, text } from '../json.js';
+import { clampLimit, runSearchPipeline } from '../pipeline.js';
 import { dedupeWorks, normalizeDoi } from '../dedupe.js';
 import { ProviderError, RateLimiter, requestJson } from '../ratelimit.js';
 import type { SearchOptions, SearchResult, WorkItem } from '../types.js';
@@ -18,14 +20,6 @@ const FIELDS = 'title,authors.name,year,venue,externalIds,abstract,citationCount
 export interface S2Options extends SearchOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 /** S2 paper JSON → WorkItem；无标题返回 undefined。 */
@@ -90,21 +84,16 @@ async function s2Get(url: URL, options: S2Options): Promise<unknown> {
   });
 }
 
-function diagnostics(error: unknown): SearchResult['diagnostics'] {
-  return {
-    semanticscholar: {
-      ok: false,
-      count: 0,
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
+function s2Data(value: unknown): unknown[] {
+  const data = record(value).data;
+  return Array.isArray(data) ? data : [];
 }
 
 /** 关键词检索（S2 /paper/search）。失败返回空结果 + diagnostics，不向上抛。 */
 export async function searchSemanticScholar(query: string, options: S2Options = {}): Promise<SearchResult> {
   const q = query.replace(/\s+/g, ' ').trim();
   if (!q) throw new ProviderError('检索词不能为空。', 'bad_request', false, 400);
-  const limit = Math.min(Math.max(options.limit ?? 10, 1), 100);
+  const limit = clampLimit(options.limit, 10, 100);
 
   const url = new URL(`${API_BASE}/paper/search`);
   url.searchParams.set('query', q);
@@ -114,17 +103,13 @@ export async function searchSemanticScholar(query: string, options: S2Options = 
     url.searchParams.set('year', `${options.yearFrom ?? ''}-${options.yearTo ?? ''}`);
   }
 
-  try {
-    const value = await s2Get(url, options);
-    const data = record(value).data;
-    const items = dedupeWorks((Array.isArray(data) ? data : []).flatMap((raw) => {
-      const item = mapS2Paper(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { semanticscholar: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics(error) };
-  }
+  return runSearchPipeline({
+    source: 'semanticscholar',
+    limit,
+    rawsOf: s2Data,
+    mapItem: mapS2Paper,
+    fetch: () => s2Get(url, options),
+  });
 }
 
 /** 按 DOI 查单篇（含摘要）。404 → undefined；其他错误向上抛。 */

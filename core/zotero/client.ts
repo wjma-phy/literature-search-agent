@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { record } from '../json.js';
 import { normalizeDoi } from '../dedupe.js';
 
 const DEFAULT_BASE_URL = 'http://localhost:23119/api';
@@ -49,10 +50,6 @@ export interface ZoteroClientOptions {
   /** 授权弹窗里显示的应用名 */
   appName?: string;
   fetchImpl?: typeof fetch;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function extractYear(dateStr: unknown): number | null {

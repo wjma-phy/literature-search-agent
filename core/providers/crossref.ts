@@ -6,6 +6,9 @@
  * 节流：有 mailto → polite pool 100ms；无 → 匿名 1000ms 保守档。
  */
 
+import { record, text } from '../json.js';
+import { cleanMarkup } from '../clean.js';
+import { clampLimit, runSearchPipeline } from '../pipeline.js';
 import { dedupeWorks, normalizeDoi } from '../dedupe.js';
 import { ProviderError, RateLimiter, requestJson } from '../ratelimit.js';
 import type { SearchOptions, SearchResult, WorkItem } from '../types.js';
@@ -17,26 +20,9 @@ export interface CrossrefOptions extends SearchOptions {
   fetchImpl?: typeof fetch;
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-/** Crossref abstract 字段常带 JATS/HTML 标签与实体，清洗为纯文本。 */
+/** Crossref abstract 字段常带 JATS/HTML 标签与实体，清洗为纯文本（复用 core/clean 的单一实现）。 */
 export function cleanCrossrefAbstract(value: string | undefined): string {
-  if (!value) return '';
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
+  return cleanMarkup(value, { nbsp: false, extraEntities: true });
 }
 
 /** Crossref work message → WorkItem；无标题返回 undefined。 */
@@ -114,16 +100,6 @@ async function crossrefGet(url: URL, options: CrossrefOptions): Promise<unknown>
   });
 }
 
-function diagnostics(error: unknown): SearchResult['diagnostics'] {
-  return {
-    crossref: {
-      ok: false,
-      count: 0,
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
-}
-
 function messageItems(value: unknown): unknown[] {
   const items = record(record(value).message).items;
   return Array.isArray(items) ? items : [];
@@ -136,7 +112,7 @@ function messageItems(value: unknown): unknown[] {
 export async function searchCrossref(query: string, options: CrossrefOptions & { author?: string } = {}): Promise<SearchResult> {
   const q = query.replace(/\s+/g, ' ').trim();
   if (!q) throw new ProviderError('检索词不能为空。', 'bad_request', false, 400);
-  const limit = Math.min(Math.max(options.limit ?? 10, 1), 100);
+  const limit = clampLimit(options.limit, 10, 100);
 
   const url = new URL(`${API_BASE}/works`);
   url.searchParams.set('query.bibliographic', q);
@@ -148,16 +124,13 @@ export async function searchCrossref(query: string, options: CrossrefOptions & {
   if (options.yearTo) filters.push(`until-pub-date:${options.yearTo}-12-31`);
   if (filters.length) url.searchParams.set('filter', filters.join(','));
 
-  try {
-    const value = await crossrefGet(url, options);
-    const items = dedupeWorks(messageItems(value).flatMap((raw) => {
-      const item = mapCrossrefWork(raw);
-      return item ? [item] : [];
-    })).slice(0, limit);
-    return { items, diagnostics: { crossref: { ok: true, count: items.length } } };
-  } catch (error) {
-    return { items: [], diagnostics: diagnostics(error) };
-  }
+  return runSearchPipeline({
+    source: 'crossref',
+    limit,
+    rawsOf: messageItems,
+    mapItem: mapCrossrefWork,
+    fetch: () => crossrefGet(url, options),
+  });
 }
 
 /** 按 DOI 查单篇。404 → undefined；其他错误向上抛。 */

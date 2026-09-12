@@ -21,61 +21,43 @@ function resolveCoreUrl() {
 
 const CORE_URL = resolveCoreUrl();
 
-/** 从环境变量解析认证配置。 */
-function authFromEnv() {
-  const auth = {};
-  const openAlexApiKey = process.env.LIT_SEARCH_OPENALEX_API_KEY?.trim();
-  const s2ApiKey = process.env.LIT_SEARCH_S2_API_KEY?.trim();
-  const mailto = process.env.LIT_SEARCH_MAILTO?.trim();
-  const zoteroKey = process.env.LIT_SEARCH_ZOTERO_KEY?.trim();
-  const zoteroUrl = process.env.LIT_SEARCH_ZOTERO_URL?.trim();
-  if (openAlexApiKey) auth.openAlexApiKey = openAlexApiKey;
-  if (s2ApiKey) auth.s2ApiKey = s2ApiKey;
-  if (mailto) auth.mailto = mailto;
-  if (zoteroKey) auth.zoteroKey = zoteroKey;
-  if (zoteroUrl) auth.zoteroUrl = zoteroUrl;
-  return auth;
-}
+/**
+ * 认证统一走 core.parseEnvAuth（单一实现），各源选项由 core.*Auth 装配——
+ * 「环境变量命名 → provider 选项键名」的知识只住在 core/auth.ts。
+ */
 
 /** 创建 ZoteroClient 实例。 */
-function createZoteroClient(auth) {
+function createZoteroClient(core, auth) {
   return new core.ZoteroClient({
-    ...(auth.zoteroUrl ? { baseUrl: auth.zoteroUrl } : {}),
-    ...(auth.zoteroKey ? { apiKey: auth.zoteroKey } : {}),
     autoAuthorize: true,
     appName: 'dsh-lit-research',
+    ...core.zoteroAuth(auth),
   });
 }
 
-/** 裁剪 WorkItem 为精简格式（防上下文爆炸）。 */
-function trimWorkItem(item) {
+/** 检索结果投影为精简格式（预算策略在 core/toSearchView）。 */
+function toTrimmedResult(result, core) {
   return {
-    title: item.title,
-    authors: item.authors.slice(0, 5),
-    year: item.year,
-    venue: item.venue,
-    doi: item.doi,
-    citationCount: item.citationCount,
-    abstract: item.abstract ? item.abstract.slice(0, 2000) : '',
-    abstractStatus: item.abstractStatus,
-    oaPdfUrl: item.oaPdfUrl,
-    source: item.source,
-    url: item.url,
-  };
-}
-
-/** 裁剪 SearchResult 为精简格式。 */
-function trimSearchResult(result) {
-  return {
-    items: result.items.map(trimWorkItem),
+    items: result.items.map((item) => core.toSearchView(item)),
     diagnostics: result.diagnostics,
   };
 }
 
-/** 通用错误处理：将异常转为工具错误结果。 */
-function toolError(error) {
+/**
+ * 通用错误处理：把底层异常包装成带工具名的清晰错误。
+ *
+ * 必须 **抛出**，不能返回信封对象：DSH 的 ToolRuntime 把 execute 的返回值一律当作
+ * 「符合 output.schema 的成功值」交给 render，出错路径只认抛出的异常
+ * （dsh-tools: `const returned = await tool.execute(...); createSuccessResult(exec, tool, returned)`
+ * 外层 `catch (error) { return toolErrorResult(error) }`）。
+ * 若在此返回 {isError:true,...}，该信封会被当成成功值送进 render，
+ * 报出误导性的 "output.render failed"，把真实错误原因完全掩盖。
+ */
+function wrapToolError(toolName, error) {
   const message = error instanceof Error ? error.message : String(error);
-  return { isError: true, error: { message } };
+  const wrapped = new Error(`${toolName} 执行失败：${message}`);
+  wrapped.cause = error;
+  return wrapped;
 }
 
 /** 延迟加载 core 模块（避免顶层 import 失败导致插件无法加载）。 */
@@ -87,6 +69,37 @@ async function loadCore() {
     });
   }
   return corePromise;
+}
+
+/**
+ * 把作者参数 DSL 编译成 DSH 工具注册所需的 JSON Schema。
+ *
+ * `ctx.tools.register()` 接收的是**已编译**的 ToolDefinition——它只校验 output，
+ * 不再处理 parameters（编译是 dsh-tools 里 `defineTool()` 的职责）。
+ * 若直接把 DSL `{ query: { type: 'string', required: true } }` 交给 register，
+ * 这个对象会被原样发给模型 API 并触发校验失败：
+ *   Invalid schema for function 'lit_search': {"type":"string",...} is not of type "string"
+ *
+ * 这里复刻 `parameterSchemaSpecToJsonSchema()` 的行为：
+ * 属性表 → { type:'object', properties, required? }，并把各属性的 required:true
+ * 收集到根 required 数组里。参数根保持开放（不写 additionalProperties）。
+ *
+ * @param spec 作者 DSL：{ 参数名: { type, description?, required? } }
+ * @returns 可注册的 JSON Schema
+ */
+function compileParams(spec) {
+  const properties = {};
+  const required = [];
+  for (const [key, def] of Object.entries(spec ?? {})) {
+    const { required: isRequired, ...rest } = def ?? {};
+    properties[key] = rest;
+    if (isRequired === true) required.push(key);
+  }
+  return {
+    type: 'object',
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  };
 }
 
 // 工具定义
@@ -103,25 +116,24 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
-        items: { type: 'array', items: { type: 'object' } },
-        diagnostics: { type: 'object' },
+        items: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        diagnostics: { type: 'object', additionalProperties: true },
       },
     },
     async execute(args) {
       const core = await loadCore();
-      const auth = authFromEnv();
+      const auth = core.parseEnvAuth(process.env);
       const limit = Math.min(Math.max(args.limit ?? 10, 1), 200);
+      const source = (args.source || 'openalex').toLowerCase();
       const opts = {
         limit,
         ...(args.yearFrom ? { yearFrom: args.yearFrom } : {}),
         ...(args.yearTo ? { yearTo: args.yearTo } : {}),
-        ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-        ...(auth.s2ApiKey ? { apiKey: auth.s2ApiKey } : {}),
+        ...(source === 's2' ? core.s2Auth(auth) : core.openAlexAuth(auth)),
       };
       let result;
-      const source = (args.source || 'openalex').toLowerCase();
       if (source === 's2') {
         result = await core.searchSemanticScholar(args.query, opts);
       } else if (source === 'crossref') {
@@ -129,20 +141,25 @@ const toolDefinitions = [
       } else {
         result = await core.searchOpenAlex(args.query, opts);
       }
-      return trimSearchResult(result);
+      return toTrimmedResult(result, core);
     },
     render(args, value) {
+      const items = Array.isArray(value?.items) ? value.items : [];
+      const diagnostics = value?.diagnostics && typeof value.diagnostics === 'object' ? value.diagnostics : {};
       const lines = [];
-      for (const item of value.items) {
-        const authors = item.authors.join(', ');
+      for (const item of items) {
+        const authors = Array.isArray(item.authors) ? item.authors.join(', ') : '';
         const year = item.year ?? '?';
-        const cited = item.citationCount !== null ? `被引 ${item.citationCount}` : '';
+        const cited = item.citationCount !== null && item.citationCount !== undefined ? `被引 ${item.citationCount}` : '';
         const doi = item.doi ? `DOI: ${item.doi}` : '';
         lines.push(`- **${item.title}** (${authors}, ${year}) ${cited} ${doi}\n  来源: ${item.source} | ${item.url}`);
       }
-      const diag = Object.entries(value.diagnostics)
+      const diag = Object.entries(diagnostics)
         .map(([k, v]) => `${k}: ${v.ok ? `✓ ${v.count} 条` : `✗ ${v.error}`}`)
         .join(' | ');
+      if (items.length === 0) {
+        return [{ type: 'text', text: `检索「${args.query}」无结果。${diag ? `\n\n---\n${diag}` : ''}` }];
+      }
       return [{ type: 'text', text: `检索「${args.query}」结果：\n\n${lines.join('\n\n')}\n\n---\n${diag}` }];
     },
   },
@@ -155,6 +172,7 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         abstract: { type: 'string' },
         source: { type: 'string' },
@@ -164,17 +182,13 @@ const toolDefinitions = [
     },
     async execute(args) {
       const core = await loadCore();
-      const auth = authFromEnv();
+      const auth = core.parseEnvAuth(process.env);
       if (!args.doi && !args.title) {
         throw new Error('必须提供 doi 或 title 之一。');
       }
       const result = await core.enrichAbstract(
         { doi: args.doi, title: args.title || '' },
-        {
-          ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-          ...(auth.s2ApiKey ? { s2ApiKey: auth.s2ApiKey } : {}),
-          ...(auth.mailto ? { mailto: auth.mailto } : {}),
-        },
+        core.enrichAuth(auth),
       );
       return {
         abstract: result.abstract.slice(0, 2000),
@@ -199,30 +213,31 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
-        items: { type: 'array', items: { type: 'object' } },
-        diagnostics: { type: 'object' },
+        items: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        diagnostics: { type: 'object', additionalProperties: true },
       },
     },
     async execute(args) {
       const core = await loadCore();
-      const auth = authFromEnv();
+      const auth = core.parseEnvAuth(process.env);
       const limit = Math.min(Math.max(args.limit ?? 25, 1), 200);
-      const result = await core.citedByOpenAlex(args.identifier, {
-        limit,
-        ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-        ...(auth.mailto ? { mailto: auth.mailto } : {}),
-      });
-      return trimSearchResult(result);
+      const result = await core.citedByOpenAlex(args.identifier, { limit, ...core.openAlexAuth(auth) });
+      return toTrimmedResult(result, core);
     },
     render(args, value) {
+      const items = Array.isArray(value?.items) ? value.items : [];
+      if (items.length === 0) {
+        return [{ type: 'text', text: `未找到「${args.identifier}」的被引记录。` }];
+      }
       const lines = [];
-      for (const item of value.items) {
-        const authors = item.authors.join(', ');
+      for (const item of items) {
+        const authors = Array.isArray(item.authors) ? item.authors.join(', ') : '';
         const year = item.year ?? '?';
         lines.push(`- **${item.title}** (${authors}, ${year})`);
       }
-      return [{ type: 'text', text: `被引列表（${value.items.length} 条）：\n\n${lines.join('\n')}` }];
+      return [{ type: 'text', text: `被引列表（${items.length} 条）：\n\n${lines.join('\n')}` }];
     },
   },
   {
@@ -235,6 +250,7 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         path: { type: 'string' },
         bytes: { type: 'integer' },
@@ -243,16 +259,10 @@ const toolDefinitions = [
     },
     async execute(args) {
       const core = await loadCore();
-      const auth = authFromEnv();
+      const auth = core.parseEnvAuth(process.env);
       let pdfUrl = args.oaPdfUrl || '';
       if (!pdfUrl && args.doi) {
-        pdfUrl = await core.discoverOaPdfUrl(
-          { doi: args.doi, oaPdfUrl: '' },
-          {
-            ...(auth.openAlexApiKey ? { openAlexApiKey: auth.openAlexApiKey } : {}),
-            ...(auth.mailto ? { mailto: auth.mailto } : {}),
-          },
-        );
+        pdfUrl = await core.discoverOaPdfUrl({ doi: args.doi, oaPdfUrl: '' }, core.pdfAuth(auth));
       }
       if (!pdfUrl) {
         throw new Error('未找到 OA PDF 链接。可尝试提供 oaPdfUrl 参数。');
@@ -275,6 +285,7 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         text: { type: 'string' },
         pageCount: { type: 'integer' },
@@ -310,14 +321,15 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
-        items: { type: 'array', items: { type: 'object' } },
+        items: { type: 'array', items: { type: 'object', additionalProperties: true } },
       },
     },
     async execute(args) {
       const core = await loadCore();
-      const auth = authFromEnv();
-      const client = createZoteroClient(auth);
+      const auth = core.parseEnvAuth(process.env);
+      const client = createZoteroClient(core, auth);
       const items = await client.searchItems(args.query, {
         limit: Math.min(Math.max(args.limit ?? 20, 1), 100),
         ...(args.qmode ? { qmode: args.qmode } : {}),
@@ -325,15 +337,16 @@ const toolDefinitions = [
       return { items };
     },
     render(args, value) {
-      if (!value.items || value.items.length === 0) {
+      const items = Array.isArray(value?.items) ? value.items : [];
+      if (items.length === 0) {
         return [{ type: 'text', text: `Zotero 中未找到「${args.query}」相关条目。` }];
       }
-      const lines = value.items.map((item) => {
-        const authors = item.authors ? item.authors.join(', ') : '未知作者';
+      const lines = items.map((item) => {
+        const authors = Array.isArray(item.authors) && item.authors.length > 0 ? item.authors.join(', ') : '未知作者';
         const year = item.year ?? '?';
         return `- **${item.title}** (${authors}, ${year}) [key: ${item.key}]`;
       });
-      return [{ type: 'text', text: `Zotero 检索结果（${value.items.length} 条）：\n\n${lines.join('\n')}` }];
+      return [{ type: 'text', text: `Zotero 检索结果（${items.length} 条）：\n\n${lines.join('\n')}` }];
     },
   },
   {
@@ -348,6 +361,7 @@ const toolDefinitions = [
     },
     outputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         outcome: { type: 'string' },
         itemKey: { type: 'string' },
@@ -356,28 +370,19 @@ const toolDefinitions = [
     },
     async execute(args) {
       const core = await loadCore();
-      const auth = authFromEnv();
-      const client = createZoteroClient(auth);
+      const auth = core.parseEnvAuth(process.env);
+      const client = createZoteroClient(core, auth);
 
       // 解析文献元数据
       let workItem;
       if (args.doi) {
-        workItem = await core.lookupOpenAlexByDoi(args.doi, {
-          ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-          ...(auth.mailto ? { mailto: auth.mailto } : {}),
-        }).catch(() => undefined);
+        workItem = await core.lookupOpenAlexByDoi(args.doi, core.openAlexAuth(auth)).catch(() => undefined);
         if (!workItem) {
-          workItem = await core.lookupCrossrefByDoi(args.doi, {
-            ...(auth.mailto ? { mailto: auth.mailto } : {}),
-          }).catch(() => undefined);
+          workItem = await core.lookupCrossrefByDoi(args.doi, core.crossrefAuth(auth)).catch(() => undefined);
         }
       }
       if (!workItem && args.title) {
-        const result = await core.searchOpenAlex(args.title, {
-          limit: 1,
-          ...(auth.openAlexApiKey ? { apiKey: auth.openAlexApiKey } : {}),
-          ...(auth.mailto ? { mailto: auth.mailto } : {}),
-        });
+        const result = await core.searchOpenAlex(args.title, { limit: 1, ...core.openAlexAuth(auth) });
         workItem = result.items[0];
       }
       if (!workItem) {
@@ -410,7 +415,7 @@ function apply(ctx) {
     const tool = ctx.tools.register({
       name: def.name,
       description: def.description,
-      parameters: def.parameters,
+      parameters: compileParams(def.parameters),
       output: {
         schema: def.outputSchema,
         render: def.render,
@@ -419,7 +424,8 @@ function apply(ctx) {
         try {
           return await def.execute(args, exec);
         } catch (error) {
-          return toolError(error);
+          // 抛异常（而非返回信封）——见 wrapToolError 的说明。
+          throw wrapToolError(def.name, error);
         }
       },
     });

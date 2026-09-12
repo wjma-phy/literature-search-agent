@@ -4,18 +4,8 @@
  * openAccessAbstract（只保留 HTML 路径；PDF 摘要抽取由 core/pdf 承担）。
  */
 
+import { cleanMarkup } from '../clean.js';
 import { ProviderError, requestText } from '../ratelimit.js';
-
-function cleanMarkup(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 /** 只允许公网 https（防 SSRF 到 localhost/内网）。 */
 export function safeOpenAccessUrl(value: string | undefined): URL | undefined {
