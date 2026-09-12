@@ -17,10 +17,10 @@ literature-search-agent core（OpenAlex 检索/去重/节流）。
 
 ```bash
 # npm 已发布时：
-dsh plugin --profile web add dsh-literature-search@0.1.0
+dsh plugin --profile web add dsh-literature-search@0.2.0
 
 # GitHub Release tarball：
-dsh plugin --profile web add https://github.com/wjma-phy/literature-search-agent/releases/download/v0.1.0/dsh-literature-search-0.1.0.tgz
+dsh plugin --profile web add https://github.com/wjma-phy/literature-search-agent/releases/download/v0.2.0/dsh-literature-search-0.2.0.tgz
 ```
 
 安装后**重启 DSH**，侧栏底部出现「📚 文献检索」，设置抽屉出现「文献调研助手 · 说明」。

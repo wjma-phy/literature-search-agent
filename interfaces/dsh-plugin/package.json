@@ -1,6 +1,6 @@
 {
   "name": "dsh-literature-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH web 插件：文献检索面板（侧边栏入口 + 浮动面板），进程内调用 literature-search-agent core（OpenAlex 检索/去重/节流）",
   "type": "module",
   "main": "lib/index.js",
