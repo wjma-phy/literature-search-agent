@@ -26,6 +26,7 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "lib/vendor/lit-core.bundle.js",
     "cordis.patch.yml",
     "README.md"
   ],

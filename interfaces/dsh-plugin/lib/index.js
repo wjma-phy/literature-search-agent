@@ -2,14 +2,14 @@
  * dsh-literature-search — Host 半。
  * 注册 /lit-search/api/search 路由，进程内直接调用 literature-search-agent core。
  *
- * 本地开发：经 pnpm file: 软链安装时，'../../dist/core/index.js' 解析到仓库构建产物
- * （需先运行 pnpm build / npm run build 生成 dist/）。
- * 发布形态：后续用 tsdown 把 core 打进本文件（或依赖已发布的 literature-search-agent 包）。
+ * core 以自包含 bundle 形式随包分发（lib/vendor/lit-core.bundle.js，由仓库构建脚本生成），
+ * 因此本包安装后无需 literature-search-agent 源码或 dist/ 目录。
+ * pdf-parse 为可选运行时依赖，仅在 PDF 全文提取时惰性加载。
  *
  * 认证从环境变量注入：LIT_SEARCH_OPENALEX_API_KEY / LIT_SEARCH_MAILTO。
  */
 
-import { searchOpenAlex } from '../../dist/core/index.js';
+import { searchOpenAlex } from './vendor/lit-core.bundle.js';
 
 const ROUTE = '/lit-search/api/search';
 
