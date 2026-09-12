@@ -1,0 +1,611 @@
+<!doctype html>
+<!-- 文献检索工作台 · 基于 literature-search-agent 的窗口（dsh-worktable 原生皮肤） -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文献检索工作台</title>
+  <link rel="stylesheet" href="/api/worktable/template/dshell.css" />
+  <style>
+    /* 仅补充布局与结果展示所需的最小样式，视觉一律走 dshell 皮肤 */
+    .tab-panel { display: none; }
+    .tab-panel.on { display: flex; flex-direction: column; gap: 12px; }
+    .frow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .frow label { font-size: 12px; color: var(--dsw-alias-label-secondary, #9aa4b2); flex: none; min-width: 56px; }
+    .frow .dshell-input { width: auto; flex: 1 1 180px; }
+    .frow .dshell-input.sm { flex: 0 1 90px; }
+    .cmd { margin: 0; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1, #262b36); border-radius: 8px;
+           background: rgba(0,0,0,.35); color: #c9d1d9; font: 12px/1.55 Consolas, "Cascadia Mono", monospace;
+           white-space: pre-wrap; word-break: break-all; user-select: text; }
+    .cmd .c { color: #7ee787; } .cmd .a { color: #79c0ff; } .cmd .v { color: #ffa657; }
+    .res-card { cursor: default; }
+    .res-title { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary, #e6e8eb); }
+    .res-meta { font-size: 11.5px; color: var(--dsw-alias-label-tertiary, #6b7280); margin: 2px 0 4px; }
+    .res-authors { font-size: 11.5px; color: var(--dsw-alias-label-secondary, #9aa4b2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .res-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+    .res-abs { margin-top: 8px; font-size: 12px; color: var(--dsw-alias-label-secondary, #9aa4b2); }
+    .res-note { border: 1px dashed var(--dsw-alias-border-l2, #3a4150); border-radius: 8px; padding: 8px 12px;
+                font-size: 12px; color: var(--dsw-alias-label-secondary, #9aa4b2); }
+    .link { color: #58a6ff; text-decoration: none; } .link:hover { text-decoration: underline; }
+    .kv-inline { display: flex; gap: 6px; align-items: center; }
+    .num { font-variant-numeric: tabular-nums; }
+    .mini { font-size: 11px; color: var(--dsw-alias-label-tertiary, #6b7280); }
+  </style>
+</head>
+<body>
+<div class="dshell" id="app">
+
+  <!-- 标题区 -->
+  <div>
+    <h1 class="dshell-title">文献检索工作台 <span class="dshell-muted">· literature-search-agent 控制台</span></h1>
+    <p class="dshell-sub">免费 Agent 学术文献调研：多源检索 / 摘要富集 / 引用扩展 / OA PDF / Zotero 归档。窗口内可直连免费 API 实时检索，重活（PDF 下载、Zotero）给命令到「终端」窗口执行。</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+      <span class="dshell-badge dshell-badgeDone">阶段1 核心检索</span>
+      <span class="dshell-badge dshell-badgeDone">阶段2 富集+PDF</span>
+      <span class="dshell-badge dshell-badgeDone">阶段3 Zotero</span>
+      <span class="dshell-badge dshell-badgeWait">阶段4 DSH preset</span>
+      <span class="dshell-badge dshell-badgeWait">阶段4b 插件</span>
+    </div>
+  </div>
+
+  <!-- 标签页 -->
+  <div class="dshell-tabs">
+    <button class="dshell-tab dshell-tabOn" data-tab="overview">概览</button>
+    <button class="dshell-tab" data-tab="search">即时检索</button>
+    <button class="dshell-tab" data-tab="doi">DOI 工具箱</button>
+    <button class="dshell-tab" data-tab="zotero">Zotero 归档</button>
+    <button class="dshell-tab" data-tab="cmds">命令库</button>
+    <button class="dshell-tab" data-tab="env">环境变量</button>
+  </div>
+
+  <!-- ============ 概览 ============ -->
+  <section class="tab-panel on" id="tab-overview">
+    <div class="dshell-grid">
+      <div class="dshell-stat"><div class="dshell-statLabel">免费数据源</div><div class="dshell-statValue">5</div><div class="dshell-statDelta">OpenAlex / S2 / Crossref / Unpaywall / arXiv</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">CLI 子命令</div><div class="dshell-statValue">9</div><div class="dshell-statDelta">search→zotero-save</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">阶段进度</div><div class="dshell-statValue">3/4</div><div class="dshell-statDelta">阶段4 进行中</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">运行环境</div><div class="dshell-statValue">Node ≥18</div><div class="dshell-statDelta">纯 TS · ESM · vitest</div></div>
+    </div>
+
+    <div class="res-note">💡 用途速览：在「即时检索」里查文献（窗口直连免费 API）→ 复制命令到<b>工作台「终端」窗口</b>跑富集 / PDF / Zotero 归档（先 <span class="c" style="color:#7ee787">npm run build</span> 一次）。终端窗口请建在项目文件夹：<span style="font-family:Consolas,monospace">D:\AI Programs\literature-search-agent</span>。</div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">实施进度</h2>
+      <div class="dshell-list">
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">阶段 1 · 核心检索：openalex 检索 / DOI 查证 / cited-by + 48 例单测</span><span class="dshell-badge dshell-badgeDone">已完成</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">阶段 2 · 摘要富集链 + S2/Crossref + OA PDF 发现/下载/全文提取</span><span class="dshell-badge dshell-badgeDone">已完成</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">阶段 3 · Zotero 归档：DOI 查重 / 建条目 / 挂 PDF / 笔记 / 收藏夹</span><span class="dshell-badge dshell-badgeDone">已完成</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">阶段 4 · DSH preset 封装：7 个 model 工具 + 中文 persona「文献调研助手」</span><span class="dshell-badge dshell-badgeWait">进行中</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">阶段 4b · 可安装 DSH 插件（dsh-literature-search）：侧边栏检索面板</span><span class="dshell-badge dshell-badgeWait">计划中</span></div>
+      </div>
+      <div class="dshell-divider" style="margin:10px 0"></div>
+      <div class="dshell-kv">
+        <div class="dshell-kvRow"><span class="dshell-kvKey">架构</span><span class="dshell-kvValue">core/ 纯 TS 能力库 + interfaces/{cli, dsh-preset, dsh-plugin, mcp} + tests/</span></div>
+        <div class="dshell-kvRow"><span class="dshell-kvKey">依赖约束</span><span class="dshell-kvValue">零付费 API · 零 Deep Read 依赖 · PDF 纯 JS（pdf-parse）</span></div>
+        <div class="dshell-kvRow"><span class="dshell-kvKey">快速开始</span><span class="dshell-kvValue">npm install → npm run build → npm test</span></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <a class="dshell-btn dshell-btnGhost" href="README.md" target="_blank">README</a>
+        <a class="dshell-btn dshell-btnGhost" href="docs/PLAN.md" target="_blank">实施计划 PLAN.md</a>
+      </div>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">典型调研流程</h2>
+      <div class="dshell-list">
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">1. 检索 → 本窗口「即时检索」直连免费 API 筛方向</span><span class="dshell-listItemMeta">window</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">2. 富集摘要 → 终端: abstract "标题或 DOI" --pretty</span><span class="dshell-listItemMeta">terminal</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">3. 引用扩展 → 终端: cited-by &lt;DOI&gt; --limit 25</span><span class="dshell-listItemMeta">terminal</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">4. OA PDF → 终端: pdf &lt;DOI&gt;（下载到 ./pdfs/）→ extract 提全文</span><span class="dshell-listItemMeta">terminal</span></div>
+        <div class="dshell-listItem"><span class="dshell-listItemTitle">5. 归档 Zotero → 终端: zotero-auth → zotero-save &lt;DOI&gt; --note "&lt;p&gt;笔记&lt;/p&gt;"</span><span class="dshell-listItemMeta">terminal</span></div>
+      </div>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">工作台 Git 状态</h2>
+      <div id="gitLive" class="dshell-kv">
+        <div class="dshell-kvRow"><span class="dshell-kvKey">读取中…</span><span class="dshell-kvValue">调用 /api/worktable/git</span></div>
+      </div>
+      <div style="margin-top:8px"><button class="dshell-btn dshell-btnGhost" onclick="loadGit()">刷新</button></div>
+    </div>
+  </section>
+
+  <!-- ============ 即时检索 ============ -->
+  <section class="tab-panel" id="tab-search">
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">检索条件</h2>
+      <div class="frow" style="margin-bottom:8px">
+        <label>关键词</label>
+        <input class="dshell-input" id="q" placeholder="如 plasma channel ion acceleration" value="plasma channel ion acceleration" />
+      </div>
+      <div class="frow" style="margin-bottom:8px">
+        <label>数据源</label>
+        <select class="dshell-input sm" id="src">
+          <option value="openalex">OpenAlex</option>
+          <option value="s2">Semantic Scholar</option>
+          <option value="crossref">Crossref</option>
+        </select>
+        <label>条数</label>
+        <select class="dshell-input sm" id="limit"><option>5</option><option selected>10</option><option>25</option></select>
+        <label>年份</label>
+        <input class="dshell-input sm" id="fyear" placeholder="from" title="起始年(可选)" />
+        <span class="mini">—</span>
+        <input class="dshell-input sm" id="tyear" placeholder="to" title="结束年(可选)" />
+        <button class="dshell-btn" onclick="liveSearch()">立即检索</button>
+        <button class="dshell-btn dshell-btnGhost" onclick="genSearchCmd()">生成命令</button>
+      </div>
+      <div class="res-note" id="searchLiveStatus" style="display:none"></div>
+      <div style="margin-top:8px">
+        <span class="mini">CLI 等价命令（终端窗口运行）：</span>
+        <pre class="cmd" id="searchCmd"></pre>
+      </div>
+    </div>
+    <div id="searchResults"><div class="res-note">填好条件点「立即检索」——窗口直接请求免费 API；被限流或被拦截时自动退回命令模式。</div></div>
+  </section>
+
+  <!-- ============ DOI 工具箱 ============ -->
+  <section class="tab-panel" id="tab-doi">
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">DOI 查证（lookup）</h2>
+      <div class="frow" style="margin-bottom:8px">
+        <label>DOI</label><input class="dshell-input" id="doiLookup" placeholder="10.1103/revmodphys.85.751" />
+        <button class="dshell-btn dshell-btnGhost" onclick="liveLookup()">实时查证</button>
+        <button class="dshell-btn dshell-btnGhost" onclick="genLookupCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="lookupCmd"></pre>
+      <div id="lookupResult" style="margin-top:8px"></div>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">引用扩展（cited-by）</h2>
+      <div class="frow" style="margin-bottom:8px">
+        <label>DOI</label><input class="dshell-input" id="doiCited" placeholder="10.1063/1.873242" />
+        <label>条数</label><select class="dshell-input sm" id="citedLimit"><option>10</option><option selected>25</option><option>50</option></select>
+        <button class="dshell-btn dshell-btnGhost" onclick="liveCitedBy()">实时扩展</button>
+        <button class="dshell-btn dshell-btnGhost" onclick="genCitedCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="citedCmd"></pre>
+      <div id="citedResult" style="margin-top:8px"></div>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">摘要富集（abstract）</h2>
+      <p class="mini" style="margin:0 0 8px">多源兜底链：OpenAlex → Crossref → S2 / EuropePMC / arXiv 并发 → doi.org HTML → Unpaywall</p>
+      <div class="frow" style="margin-bottom:8px">
+        <label>DOI/标题</label><input class="dshell-input" id="absInput" placeholder="10.1103/revmodphys.85.751 或一段标题" />
+        <button class="dshell-btn dshell-btnGhost" onclick="genAbsCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="absCmd"></pre>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">OA PDF 下载 / 全文提取</h2>
+      <div class="frow" style="margin-bottom:8px">
+        <label>DOI</label><input class="dshell-input" id="pdfDoi" placeholder="10.1371/journal.pcbi.1003285" />
+        <button class="dshell-btn dshell-btnGhost" onclick="genPdfCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="pdfCmd"></pre>
+      <div class="frow">
+        <label>PDF 路径</label><input class="dshell-input" id="pdfPath" placeholder="./pdfs/paper.pdf 或绝对路径" />
+        <label>页数</label><input class="dshell-input sm" id="maxPages" placeholder="3" />
+        <button class="dshell-btn dshell-btnGhost" onclick="genExtractCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="extractCmd"></pre>
+    </div>
+  </section>
+
+  <!-- ============ Zotero 归档 ============ -->
+  <section class="tab-panel" id="tab-zotero">
+    <div class="res-note">前提：Zotero 10+ 正在本机运行。首次使用先跑 <span style="font-family:Consolas,monospace">zotero-auth</span>，在 Zotero 弹窗里点「始终允许 / Always Allow」拿到持久 key（写入环境变量 LIT_SEARCH_ZOTERO_KEY），之后才可写入。</div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">1. 授权（拿持久 key）</h2>
+      <button class="dshell-btn" onclick="genAuthCmd()">生成 zotero-auth 命令</button>
+      <pre class="cmd" id="authCmd"></pre>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">2. 检索本地库（只读）</h2>
+      <div class="frow" style="margin-bottom:8px">
+        <label>关键词</label><input class="dshell-input" id="zq" placeholder="ion acceleration" />
+        <label>条数</label><select class="dshell-input sm" id="zlimit"><option>10</option><option selected>20</option><option>50</option></select>
+        <button class="dshell-btn dshell-btnGhost" onclick="genZSearchCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="zSearchCmd"></pre>
+    </div>
+
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">3. 一键归档（zotero-save）</h2>
+      <p class="mini" style="margin:0 0 8px">自动：OpenAlex 取元数据 → 富集链兜底摘要 → 发现并下载 OA PDF → DOI 查重 → 建条目 + 挂 PDF + 笔记 + 收藏夹。</p>
+      <div class="frow" style="margin-bottom:8px">
+        <label>DOI</label><input class="dshell-input" id="zDoi" placeholder="10.1371/journal.pcbi.1003285" />
+        <label>笔记</label><input class="dshell-input" id="zNote" placeholder='&lt;p&gt;我的笔记&lt;/p&gt;（可空）' />
+      </div>
+      <div class="frow" style="margin-bottom:8px">
+        <label>收藏夹</label><input class="dshell-input sm" id="zColl" placeholder="collection key（可空）" />
+        <label><input type="checkbox" id="zNoPdf" style="vertical-align:-2px" /> 跳过 PDF</label>
+        <button class="dshell-btn dshell-btnGhost" onclick="genZSaveCmd()">生成命令</button>
+      </div>
+      <pre class="cmd" id="zSaveCmd"></pre>
+    </div>
+  </section>
+
+  <!-- ============ 命令库 ============ -->
+  <section class="tab-panel" id="tab-cmds">
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">命令形态</h2>
+      <div class="frow">
+        <label>前缀</label>
+        <select class="dshell-input sm" id="prefixSel" onchange="refreshCmds()">
+          <option value="node" selected>node dist/interfaces/cli/index.js（构建后推荐）</option>
+          <option value="lit">lit-search（npm 全局 bin）</option>
+        </select>
+        <span class="mini">切换后下方所有示例与「复制」同步更新。</span>
+      </div>
+    </div>
+    <div class="dshell-card">
+      <div class="dshell-table-wrap"><table class="dshell-table">
+        <tr><th>子命令</th><th>用途</th><th>示例 / 复制</th></tr>
+        <tr><td>search</td><td>多源关键词检索</td><td class="kv-inline"><pre class="cmd" data-cmd="search" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="search">复制</button></td></tr>
+        <tr><td>lookup</td><td>DOI 查证</td><td class="kv-inline"><pre class="cmd" data-cmd="lookup" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="lookup">复制</button></td></tr>
+        <tr><td>cited-by</td><td>引用扩展</td><td class="kv-inline"><pre class="cmd" data-cmd="citedby" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="citedby">复制</button></td></tr>
+        <tr><td>abstract</td><td>摘要富集链</td><td class="kv-inline"><pre class="cmd" data-cmd="abstract" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="abstract">复制</button></td></tr>
+        <tr><td>pdf</td><td>OA PDF 发现+下载</td><td class="kv-inline"><pre class="cmd" data-cmd="pdf" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="pdf">复制</button></td></tr>
+        <tr><td>extract</td><td>PDF 全文提取</td><td class="kv-inline"><pre class="cmd" data-cmd="extract" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="extract">复制</button></td></tr>
+        <tr><td>zotero-auth</td><td>Zotero 授权</td><td class="kv-inline"><pre class="cmd" data-cmd="zauth" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="zauth">复制</button></td></tr>
+        <tr><td>zotero-search</td><td>检索本地 Zotero 库</td><td class="kv-inline"><pre class="cmd" data-cmd="zsearch" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="zsearch">复制</button></td></tr>
+        <tr><td>zotero-save</td><td>DOI 一键归档</td><td class="kv-inline"><pre class="cmd" data-cmd="zsave" style="flex:1"></pre><button class="dshell-btn dshell-btnGhost" data-copy="zsave">复制</button></td></tr>
+      </table></div>
+    </div>
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">维护命令</h2>
+      <div class="dshell-kv">
+        <div class="dshell-kvRow"><span class="dshell-kvKey">构建</span><span class="dshell-kvValue" style="font-family:Consolas,monospace">npm run build</span></div>
+        <div class="dshell-kvRow"><span class="dshell-kvKey">类型检查</span><span class="dshell-kvValue" style="font-family:Consolas,monospace">npm run typecheck</span></div>
+        <div class="dshell-kvRow"><span class="dshell-kvKey">单测</span><span class="dshell-kvValue" style="font-family:Consolas,monospace">npm test</span></div>
+        <div class="dshell-kvRow"><span class="dshell-kvKey">帮助</span><span class="dshell-kvValue" style="font-family:Consolas,monospace">lit-search（不带参数）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 环境变量 ============ -->
+  <section class="tab-panel" id="tab-env">
+    <div class="dshell-card">
+      <h2 class="dshell-sub" style="margin:0 0 8px">密钥与配额约定（只走环境变量，不入库）</h2>
+      <div class="dshell-table-wrap"><table class="dshell-table">
+        <tr><th>变量</th><th>作用</th><th>设值示例（PowerShell）</th></tr>
+        <tr><td>LIT_SEARCH_MAILTO</td><td>OpenAlex polite pool / Crossref / Unpaywall 共用邮箱（推荐配置）</td><td style="font-family:Consolas,monospace">setx LIT_SEARCH_MAILTO "you@example.com"</td></tr>
+        <tr><td>LIT_SEARCH_OPENALEX_API_KEY</td><td>OpenAlex 账户额度→10 rps；无则用 mailto 池再退匿名池</td><td style="font-family:Consolas,monospace">setx LIT_SEARCH_OPENALEX_API_KEY "…"</td></tr>
+        <tr><td>LIT_SEARCH_S2_API_KEY</td><td>Semantic Scholar 独享 1 rps（无 key 匿名池 429 频发）</td><td style="font-family:Consolas,monospace">setx LIT_SEARCH_S2_API_KEY "…"</td></tr>
+        <tr><td>LIT_SEARCH_ZOTERO_KEY</td><td>Zotero 持久写 key（zotero-auth 弹窗点「始终允许」获得）</td><td style="font-family:Consolas,monospace">setx LIT_SEARCH_ZOTERO_KEY "…"</td></tr>
+        <tr><td>LIT_SEARCH_ZOTERO_URL</td><td>Zotero 本地 API 地址（默认 http://localhost:23119/api）</td><td style="font-family:Consolas,monospace">setx LIT_SEARCH_ZOTERO_URL "http://localhost:23119/api"</td></tr>
+      </table></div>
+      <p class="mini" style="margin:8px 0 0">setx 写入后对<b>之后新开</b>的终端生效；当前终端请用 <span style="font-family:Consolas,monospace">$env:VAR="值"</span>。</p>
+    </div>
+  </section>
+
+  <p class="dshell-muted">本窗口由 dsh-worktable 挂载 · 产物：workbench.html（D:\AI Programs\literature-search-agent）· 直连失败时自动降级为命令模式，重活请用工作台「终端」窗口。</p>
+</div>
+
+<script>
+'use strict';
+/* ---------- 基础工具 ---------- */
+var $ = function (id) { return document.getElementById(id); };
+var PREFIX = 'node'; // node | lit
+function prefixCmd(rest) {
+  var p = PREFIX === 'lit' ? 'lit-search' : 'node dist/interfaces/cli/index.js';
+  return 'cd /d "D:\\AI Programs\\literature-search-agent"  # 若终端不在项目目录\n' + p + ' ' + rest;
+}
+function q(s) { return '"' + String(s || '').replace(/"/g, '').trim() + '"'; }
+function doiVal(id) { return String($(id).value || '').trim(); }
+
+function copyText(text, ev) {
+  function done(ok) {
+    if (!ev) return;
+    var b = ev.currentTarget, old = b.textContent;
+    b.textContent = ok ? '✓ 已复制' : '复制失败';
+    setTimeout(function () { b.textContent = old; }, 1200);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { legacyCopy(text, done); });
+  } else { legacyCopy(text, done); }
+}
+function legacyCopy(text, done) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    done(true);
+  } catch (e) { done(false); }
+}
+function bindCopyButtons() {
+  document.querySelectorAll('button[data-copy]').forEach(function (btn) {
+    btn.onclick = function (ev) {
+      var key = btn.getAttribute('data-copy');
+      var pre = document.querySelector('pre[data-cmd="' + key + '"]');
+      if (pre) copyText(pre.textContent, ev);
+    };
+  });
+}
+
+/* ---------- 标签页 ---------- */
+function switchTab(name) {
+  document.querySelectorAll('.dshell-tab').forEach(function (t) {
+    t.classList.toggle('dshell-tabOn', t.getAttribute('data-tab') === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(function (p) {
+    p.classList.toggle('on', p.id === 'tab-' + name);
+  });
+}
+document.querySelectorAll('.dshell-tab').forEach(function (t) {
+  t.addEventListener('click', function () { switchTab(t.getAttribute('data-tab')); });
+});
+
+/* ---------- 命令生成 ---------- */
+function buildSearchCmd() {
+  var src = $('src').value, l = $('limit').value, f = $('fyear').value.trim(), t = $('tyear').value.trim();
+  var r = 'search ' + q($('q').value) + ' --source ' + src + ' --limit ' + l;
+  if (f) r += ' --from ' + f;
+  if (t) r += ' --to ' + t;
+  r += ' --pretty';
+  return prefixCmd(r);
+}
+function genSearchCmd() { $('searchCmd').textContent = buildSearchCmd(); }
+function buildLookupCmd() { return prefixCmd('lookup ' + q(doiVal('doiLookup')) + ' --source openalex --pretty'); }
+function genLookupCmd() { $('lookupCmd').textContent = buildLookupCmd(); }
+function buildCitedCmd() { return prefixCmd('cited-by ' + q(doiVal('doiCited')) + ' --limit ' + $('citedLimit').value + ' --pretty'); }
+function genCitedCmd() { $('citedCmd').textContent = buildCitedCmd(); }
+function genAbsCmd() { $('absCmd').textContent = prefixCmd('abstract ' + q($('absInput').value) + ' --pretty'); }
+function genPdfCmd() { $('pdfCmd').textContent = prefixCmd('pdf ' + q(doiVal('pdfDoi'))); }
+function genExtractCmd() {
+  var r = 'extract ' + q($('pdfPath').value);
+  var mp = $('maxPages').value.trim(); if (mp) r += ' --max-pages ' + mp;
+  r += ' --max-chars 8000 --pretty';
+  $('extractCmd').textContent = prefixCmd(r);
+}
+function genAuthCmd() { $('authCmd').textContent = prefixCmd('zotero-auth'); }
+function genZSearchCmd() { $('zSearchCmd').textContent = prefixCmd('zotero-search ' + q($('zq').value) + ' --limit ' + $('zlimit').value + ' --pretty'); }
+function genZSaveCmd() {
+  var r = 'zotero-save ' + q(doiVal('zDoi'));
+  var c = $('zColl').value.trim(); if (c) r += ' --collection ' + c;
+  var n = $('zNote').value.trim(); if (n) r += ' --note ' + n;
+  if ($('zNoPdf').checked) r += ' --no-pdf';
+  r += ' --pretty';
+  $('zSaveCmd').textContent = prefixCmd(r);
+}
+
+/* ---------- 命令库刷新 ---------- */
+var CMD_LIB = {
+  search: 'search "plasma channel ion acceleration" --source openalex --limit 10 --pretty',
+  lookup: 'lookup 10.1103/revmodphys.85.751 --source crossref --pretty',
+  citedby: 'cited-by 10.1063/1.873242 --limit 25 --pretty',
+  abstract: 'abstract 10.1103/revmodphys.85.751 --pretty',
+  pdf: 'pdf 10.1371/journal.pcbi.1003285',
+  extract: 'extract ./pdfs/paper.pdf --max-pages 3 --pretty',
+  zauth: 'zotero-auth',
+  zsearch: 'zotero-search "ion acceleration" --limit 20 --pretty',
+  zsave: 'zotero-save 10.1371/journal.pcbi.1003285 --note "<p>笔记</p>" --pretty'
+};
+function refreshCmds() {
+  PREFIX = $('prefixSel').value;
+  Object.keys(CMD_LIB).forEach(function (k) {
+    var pre = document.querySelector('pre[data-cmd="' + k + '"]');
+    if (pre) pre.textContent = prefixCmd(CMD_LIB[k]);
+  });
+}
+
+/* ---------- 实时检索（免费 API 直连，失败自动降级） ---------- */
+function fetchJSON(url, timeoutMs) {
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var t = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 15000) : null;
+  return fetch(url, ctrl ? { signal: ctrl.signal, headers: { 'Accept': 'application/json' } } : { headers: { 'Accept': 'application/json' } })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .finally(function () { if (t) clearTimeout(t); });
+}
+function setStatus(txt, ok) {
+  var el = $('searchLiveStatus');
+  el.style.display = 'block';
+  el.textContent = (ok ? '✅ ' : '⚠️ ') + txt;
+}
+function showResNote(container, html) { container.innerHTML = '<div class="res-note">' + html + '</div>'; }
+
+function fmtAuthors(list) {
+  if (!list || !list.length) return '';
+  var names = list.slice(0, 6).map(function (a) {
+    if (a.name) return a.name;
+    if (a.given || a.family) return ((a.given || '') + ' ' + (a.family || '')).trim();
+    return '';
+  }).filter(Boolean);
+  return names.join('、') + (list.length > 6 ? ' 等 ' + list.length + ' 位作者' : '');
+}
+function reconstructAbstract(inv) {
+  if (!inv || typeof inv !== 'object') return '';
+  var pos = 0, map = {};
+  Object.keys(inv).forEach(function (w) { inv[w].forEach(function (p) { if (p > pos) pos = p; map[p] = w; }); });
+  var out = [];
+  for (var i = 0; i <= pos; i++) if (map[i]) out.push(map[i]);
+  return out.join(' ');
+}
+function renderPaper(paper) {
+  var title = paper.title || '(无标题)';
+  var metaBits = [];
+  if (paper.year) metaBits.push(paper.year);
+  if (paper.venue) metaBits.push(paper.venue);
+  if (typeof paper.citationCount === 'number') metaBits.push('被引 ' + paper.citationCount);
+  var doi = paper.doi || '';
+  var abs = paper.abstract || '';
+  var absBtn = abs ? '<button class="dshell-btn dshell-btnGhost" onclick="toggleAbs(this)">摘要</button>' : '';
+  var link = doi ? '<a class="dshell-btn dshell-btnGhost" href="https://doi.org/' + encodeURIComponent(doi) + '" target="_blank" rel="noopener">DOI ↗</a>' : '';
+  return '<div class="dshell-card res-card">' +
+    '<div class="res-title">' + esc(title) + '</div>' +
+    '<div class="res-meta num">' + esc(metaBits.join(' · ')) + '</div>' +
+    '<div class="res-authors" title="' + esc(fmtAuthors(paper.authors)) + '">' + esc(fmtAuthors(paper.authors)) + '</div>' +
+    '<div class="res-actions">' + link + absBtn +
+      '<span class="mini">' + (paper.source ? esc(paper.source) : '') + '</span></div>' +
+    (abs ? '<div class="res-abs" style="display:none">' + esc(abs.slice(0, 1200)) + (abs.length > 1200 ? '…' : '') + '</div>' : '') +
+    '</div>';
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function toggleAbs(btn) {
+  var card = btn.closest('.res-card'), abs = card.querySelector('.res-abs');
+  if (!abs) return;
+  var show = abs.style.display !== 'block';
+  abs.style.display = show ? 'block' : 'none';
+  btn.textContent = show ? '收起' : '摘要';
+}
+function renderList(list, container) {
+  container.innerHTML = list.length
+    ? list.map(renderPaper).join('')
+    : '<div class="res-note">无结果。</div>';
+}
+function buildMailto() {
+  try { return localStorage.getItem('lit_mailto') || ''; } catch (e) { return ''; }
+}
+
+/* 检索 */
+function liveSearch() {
+  var qv = $('q').value.trim(), src = $('src').value, lim = $('limit').value;
+  var f = $('fyear').value.trim(), t = $('tyear').value.trim();
+  var box = $('searchResults');
+  if (!qv) { setStatus('请先输入关键词。', false); return; }
+  box.innerHTML = '<div class="res-note">检索中…（' + (src === 'openalex' ? 'OpenAlex' : src === 's2' ? 'Semantic Scholar' : 'Crossref') + '）</div>';
+  setStatus('直连 ' + (src === 'openalex' ? 'api.openalex.org' : src === 's2' ? 'api.semanticscholar.org' : 'api.crossref.org') + ' 中…', true);
+
+  var filter = '';
+  if (f) filter += ',from_publication_date:' + f + '-01-01';
+  if (t) filter += ',to_publication_date:' + t + '-12-31';
+  var mailto = buildMailto();
+
+  var url;
+  if (src === 'openalex') {
+    url = 'https://api.openalex.org/works?search=' + encodeURIComponent(qv) + '&per-page=' + lim + (filter ? '&filter=' + filter.slice(1) : '') + (mailto ? '&mailto=' + encodeURIComponent(mailto) : '');
+  } else if (src === 's2') {
+    url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(qv) + '&limit=' + lim + '&fields=title,authors,year,venue,citationCount,externalIds,url,abstract';
+  } else {
+    url = 'https://api.crossref.org/works?query=' + encodeURIComponent(qv) + '&rows=' + lim + '&select=DOI,title,author,issued,container-title,is-referenced-by-count,URL,abstract';
+  }
+
+  fetchJSON(url).then(function (data) {
+    var list = [];
+    if (src === 'openalex') {
+      (data.results || []).forEach(function (w) {
+        list.push({
+          title: w.title || '(无标题)', year: w.publication_year,
+          venue: (w.primary_location && w.primary_location.source && w.primary_location.source.display_name) || '',
+          citationCount: w.cited_by_count,
+          authors: (w.authorships || []).map(function (a) { return { name: a.author ? a.author.display_name : '' }; }),
+          doi: (w.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
+          abstract: reconstructAbstract(w.abstract_inverted_index), source: 'OpenAlex'
+        });
+      });
+    } else if (src === 's2') {
+      (data.data || []).forEach(function (p) {
+        list.push({
+          title: p.title || '(无标题)', year: p.year, venue: p.venue || '',
+          citationCount: p.citationCount, authors: p.authors || [],
+          doi: (p.externalIds && p.externalIds.DOI) || '', abstract: p.abstract || '', source: 'S2'
+        });
+      });
+    } else {
+      (data.message && data.message.items || []).forEach(function (it) {
+        list.push({
+          title: (it.title && it.title[0]) || '(无标题)',
+          year: it.issued && it.issued['date-parts'] && it.issued['date-parts'][0] && it.issued['date-parts'][0][0],
+          venue: (it['container-title'] && it['container-title'][0]) || '',
+          citationCount: it['is-referenced-by-count'], doi: it.DOI,
+          authors: (it.author || []).map(function (a) { return { given: a.given, family: a.family }; }),
+          abstract: it.abstract || '', source: 'Crossref'
+        });
+      });
+    }
+    renderList(list, box);
+    setStatus('完成，返回 ' + list.length + ' 条。（若要富集摘要 / 深链，复制上方命令到终端）', true);
+  }).catch(function (err) {
+    setStatus('浏览器直连失败（' + (err && err.message ? err.message : '网络/跨域受限') + '）。已退回命令模式——复制上方命令，在工作台「终端」窗口运行即可。', false);
+    showResNote(box, '直连被拦截或离线。本窗口负责组命令，执行请用「终端」窗口：' +
+      '<pre class="cmd" style="margin-top:6px">' + esc(buildSearchCmd()) + '</pre>' +
+      '<span class="mini">提示：API 直连在浏览器下也可能被限流；CLI 有节流+重试+polite pool，更稳。</span>');
+  });
+}
+
+/* lookup */
+function liveLookup() {
+  var doi = doiVal('doiLookup'), box = $('lookupResult');
+  if (!doi) { box.innerHTML = '<div class="res-note">请输入 DOI。</div>'; return; }
+  box.innerHTML = '<div class="res-note">查证中…</div>';
+  fetchJSON('https://api.openalex.org/works/https://doi.org/' + encodeURIComponent(doi)).then(function (w) {
+    var list = [{
+      title: w.title || '(无标题)', year: w.publication_year,
+      venue: (w.primary_location && w.primary_location.source && w.primary_location.source.display_name) || '',
+      citationCount: w.cited_by_count,
+      authors: (w.authorships || []).map(function (a) { return { name: a.author ? a.author.display_name : '' }; }),
+      doi: (w.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
+      abstract: reconstructAbstract(w.abstract_inverted_index), source: 'OpenAlex'
+    }];
+    renderList(list, box);
+  }).catch(function (err) {
+    box.innerHTML = '<div class="res-note">实时查证失败（' + esc(err && err.message || '网络/跨域') + '）。可复制上方命令到终端执行：<br/><span style="font-family:Consolas,monospace">' + esc(buildLookupCmd()) + '</span></div>';
+  });
+}
+
+/* cited-by */
+function liveCitedBy() {
+  var doi = doiVal('doiCited'), lim = $('citedLimit').value, box = $('citedResult');
+  if (!doi) { box.innerHTML = '<div class="res-note">请输入 DOI。</div>'; return; }
+  box.innerHTML = '<div class="res-note">解析 DOI → OpenAlex ID 并扩展被引文献…</div>';
+  fetchJSON('https://api.openalex.org/works/https://doi.org/' + encodeURIComponent(doi))
+    .then(function (w) {
+      return fetchJSON('https://api.openalex.org/works?filter=cites:' + w.id + '&per-page=' + lim);
+    })
+    .then(function (data) {
+      var list = (data.results || []).map(function (c) {
+        return {
+          title: c.title || '(无标题)', year: c.publication_year,
+          venue: (c.primary_location && c.primary_location.source && c.primary_location.source.display_name) || '',
+          citationCount: c.cited_by_count,
+          authors: (c.authorships || []).map(function (a) { return { name: a.author ? a.author.display_name : '' }; }),
+          doi: (c.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
+          abstract: reconstructAbstract(c.abstract_inverted_index), source: 'OpenAlex'
+        };
+      });
+      renderList(list, box);
+    })
+    .catch(function (err) {
+      box.innerHTML = '<div class="res-note">实时扩展失败（' + esc(err && err.message || '网络/跨域') + '）。可复制上方命令到终端执行：<br/><span style="font-family:Consolas,monospace">' + esc(buildCitedCmd()) + '</span></div>';
+    });
+}
+
+/* ---------- 工作台 git 状态 ---------- */
+function loadGit() {
+  var box = $('gitLive');
+  box.innerHTML = '<div class="dshell-kvRow"><span class="dshell-kvKey">读取中…</span><span class="dshell-kvValue">&nbsp;</span></div>';
+  fetch('/api/worktable/git', { headers: { 'Accept': 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (g) {
+      if (!g.isRepo) {
+        box.innerHTML = '<div class="dshell-kvRow"><span class="dshell-kvKey">git 仓库</span><span class="dshell-kvValue">未检出（工作台当前目录非本项目仓库）</span></div>' +
+          '<div class="dshell-kvRow"><span class="dshell-kvKey">提示</span><span class="dshell-kvValue">把工作台目录切到 D:\\AI Programs\\literature-search-agent 后刷新可见状态</span></div>';
+        return;
+      }
+      var changed = (g.entries || []).filter(function (e) { return e.status && e.status !== 'clean'; });
+      box.innerHTML = '<div class="dshell-kvRow"><span class="dshell-kvKey">分支 / 状态</span><span class="dshell-kvValue">' + esc(g.branch || '?') + ' · ' + esc(String(g.isClean === false ? '有改动' : (changed.length ? changed.length + ' 个改动' : '干净'))) + '</span></div>' +
+        (g.lastCommit ? '<div class="dshell-kvRow"><span class="dshell-kvKey">最近提交</span><span class="dshell-kvValue">' + esc(g.lastCommit) + '</span></div>' : '') +
+        (changed.length ? '<div class="dshell-kvRow"><span class="dshell-kvKey">改动文件</span><span class="dshell-kvValue" style="text-align:left;max-width:70%">' + esc(changed.map(function (e) { return e.file || e.path || ''; }).join('、')) + '</span></div>' : '');
+    })
+    .catch(function () {
+      box.innerHTML = '<div class="dshell-kvRow"><span class="dshell-kvKey">git 状态</span><span class="dshell-kvValue">不可用（需在工作台窗口内打开）</span></div>';
+    });
+}
+
+/* ---------- 初始化 ---------- */
+genSearchCmd(); genLookupCmd(); genCitedCmd(); genAbsCmd(); genPdfCmd(); genExtractCmd();
+genAuthCmd(); genZSearchCmd(); genZSaveCmd();
+refreshCmds(); bindCopyButtons();
+loadGit();
+setInterval(loadGit, 30000);
+</script>
+</body>
+</html>

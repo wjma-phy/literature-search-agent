@@ -51,6 +51,24 @@ node dist/interfaces/cli/index.js zotero-search "ion acceleration"
 node dist/interfaces/cli/index.js zotero-save 10.1371/journal.pcbi.1003285 --note "<p>笔记</p>"
 ```
 
+### DSH preset「文献调研助手」（阶段 4）
+
+即装即用的 Agent preset：7 个模型工具（lit_search / lit_abstract / lit_cited_by /
+lit_download_pdf / pdf_extract_text / zotero_search / zotero_save）+ 中文 persona，
+适合「调研某方向 → 筛选 → 读全文 → 写综述 → 存 Zotero」的完整工作流。
+
+**安装（接收方，约 1 分钟）：**
+
+1. 构建本仓库：`npm install && npm run build`（preset 运行时 import `dist/core/index.js`）；
+2. 把 `interfaces/dsh-preset/` 下的三个文件（`agent.cordis.yml` / `host-plugin.js` / `preset.yml`）
+   复制到 `~/.dsh/.agent-presets/lit-research/`（没有就新建该目录）；
+3. 若仓库不在 `D:\AI Programs\literature-search-agent`，设置环境变量
+   `LIT_SEARCH_CORE_URL` 指向本仓库的 `dist/core/index.js`（绝对路径或 `file://` URL 均可）；
+4. 新建 DSH 会话 → Agent preset 选择「文献调研助手」→ 工具列表应出现 7 个文献工具。
+
+> preset 目录在会话工作区之外，编辑/落盘时 DSH 沙箱可能要求一次授权，属正常现象。
+> 挂载校验（组合是否可用）可用 `agentPresets.standingKeyFor('lit-research')` 实查。
+
 可选环境变量（密钥只走环境变量，不入库）：
 - `LIT_SEARCH_OPENALEX_API_KEY`：OpenAlex 账户额度；无则退回 `LIT_SEARCH_MAILTO` polite pool，再退匿名池
 - `LIT_SEARCH_MAILTO`：OpenAlex polite pool / Crossref / Unpaywall 共用联系邮箱

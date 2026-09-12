@@ -1,0 +1,10 @@
+# dsh-literature-search bundle patch
+#
+# 安装方式（官方 CLI，会自动把 dsh-literature-search 加进 dsh.profile.bundles）：
+#
+#   dsh plugin --profile web add dsh-literature-search@<version>
+#
+# 本 patch 只 insert 一条 Host 插件行；Client 半由 package.json 的 dsh.client 声明。
+- insert:
+    - id: literature-search
+      name: 'dsh-literature-search'

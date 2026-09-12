@@ -31,6 +31,7 @@ literature-search-agent/
 ├── interfaces/
 │   ├── cli/                 # lit-search CLI：调试与手动使用
 │   ├── dsh-preset/          # DSH agent preset：cordis.yml + Host 插件 + persona
+│   ├── dsh-plugin/          # 可安装 DSH web 插件（npm 包）：检索面板 UI + 进程内 import core
 │   └── mcp/                 # （长期）MCP stdio server
 ├── tests/                   # vitest
 └── docs/PLAN.md             # 本文件
@@ -86,6 +87,12 @@ literature-search-agent/
 - [ ] `interfaces/dsh-preset/`：cordis 组合 + Host 插件注册 7 个工具（lit_search / lit_abstract / lit_cited_by / lit_download_pdf / pdf_extract_text / zotero_search / zotero_save）+ persona
 - [ ] 实机验收：DSH 会话内「调研 X 方向 → 筛 8 篇 → 读全文 → 写综述 md → 存 Zotero」
 - **前置实查**：preset 挂载机制以 `editing-cordis-compositions` skill 为准；若 preset 不适合，降级为动态插件 import 本库
+
+### 阶段 4b：可安装 DSH 插件（dsh-literature-search，与 preset 互补）
+- [ ] `interfaces/dsh-plugin/`：npm 包形态（dsh.bundle.patch + dsh.client），侧边栏入口 + 浮动检索面板
+- 已由动态插件原型（litui-1）验证 UI 形态；Host 半进程内 import core，Client 半手写 lazy-CJS factory（后续可换 tsdown 构建）
+- 实测要点：动态插件 shell 服务挂起需用 subprocess；shell.overlay z-index 需提升；安装后需重启 DSH 才挂载
+- 分发：npm 发布 / GitHub Release tarball / 插件市场（awesome-dsh-plugin 目录收录），供学生一键安装
 
 ## 长期计划
 
